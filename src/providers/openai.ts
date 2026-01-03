@@ -142,7 +142,7 @@ function wrapCompletionsNamespace(completions: OpenAIClient['completions']) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return wrapLegacyCompletionCreate(value.bind(target));
+        return wrapCompletionCreate(value.bind(target));
       }
 
       return value;

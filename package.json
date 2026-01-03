@@ -66,12 +66,24 @@
   },
   "typesVersions": {
     "*": {
-      "next": ["./dist/next.d.ts"],
-      "lambda": ["./dist/lambda.d.ts"],
-      "express": ["./dist/express.d.ts"],
-      "hono": ["./dist/hono.d.ts"],
-      "integrations": ["./dist/integrations.d.ts"],
-      "*": ["./dist/index.d.ts"]
+      "next": [
+        "./dist/next.d.ts"
+      ],
+      "lambda": [
+        "./dist/lambda.d.ts"
+      ],
+      "express": [
+        "./dist/express.d.ts"
+      ],
+      "hono": [
+        "./dist/hono.d.ts"
+      ],
+      "integrations": [
+        "./dist/integrations.d.ts"
+      ],
+      "*": [
+        "./dist/index.d.ts"
+      ]
     }
   },
   "files": [
@@ -85,6 +97,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "docs": "typedoc",
     "prepublishOnly": "npm run build",
     "lint": "eslint src/",
     "test": "vitest",
@@ -93,6 +106,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "tsup": "^8.5.1",
+    "typedoc": "^0.28.15",
     "typescript": "^5.9.3"
   }
 }

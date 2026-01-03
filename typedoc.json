@@ -1,0 +1,25 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": [
+    "src/index.ts",
+    "src/integrations/next.ts",
+    "src/integrations/lambda.ts",
+    "src/integrations/express.ts",
+    "src/integrations/hono.ts"
+  ],
+  "out": "docs",
+  "name": "@lelemondev/sdk",
+  "readme": "README.md",
+  "includeVersion": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeInternal": true,
+  "githubPages": true,
+  "navigationLinks": {
+    "GitHub": "https://github.com/lelemondev/lelemondev-sdk",
+    "npm": "https://www.npmjs.com/package/@lelemondev/sdk"
+  },
+  "customCss": "",
+  "hideGenerator": true,
+  "searchInComments": true
+}
