@@ -1,0 +1,73 @@
+{
+  "name": "@lelemondev/sdk",
+  "version": "0.2.0",
+  "description": "Fire-and-forget LLM observability. 3 lines of code.",
+  "author": "Lelemon <info@lelemon.dev>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lelemondev/lelemondev-sdk.git"
+  },
+  "homepage": "https://lelemon.dev",
+  "bugs": {
+    "url": "https://github.com/lelemondev/lelemondev-sdk/issues"
+  },
+  "keywords": [
+    "llm",
+    "observability",
+    "tracing",
+    "openai",
+    "anthropic",
+    "gemini",
+    "bedrock",
+    "claude",
+    "gpt",
+    "ai",
+    "monitoring",
+    "analytics",
+    "langchain",
+    "agent"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./dist/index.mjs",
+      "deno": "./dist/index.mjs",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "*": [
+        "./dist/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint src/",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}
