@@ -1,6 +1,6 @@
 {
   "name": "@lelemondev/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Automatic LLM observability. Wrap your client, everything is traced.",
   "author": "Lelemon <info@lelemon.dev>",
   "license": "MIT",
@@ -18,15 +18,15 @@
     "tracing",
     "openai",
     "anthropic",
-    "gemini",
-    "bedrock",
+    "nextjs",
+    "lambda",
+    "express",
+    "hono",
     "claude",
     "gpt",
     "ai",
     "monitoring",
-    "analytics",
-    "langchain",
-    "agent"
+    "serverless"
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -34,19 +34,44 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "bun": "./dist/index.mjs",
-      "deno": "./dist/index.mjs",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "default": "./dist/index.mjs"
+      "require": "./dist/index.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.mjs",
+      "require": "./dist/next.js"
+    },
+    "./lambda": {
+      "types": "./dist/lambda.d.ts",
+      "import": "./dist/lambda.mjs",
+      "require": "./dist/lambda.js"
+    },
+    "./express": {
+      "types": "./dist/express.d.ts",
+      "import": "./dist/express.mjs",
+      "require": "./dist/express.js"
+    },
+    "./hono": {
+      "types": "./dist/hono.d.ts",
+      "import": "./dist/hono.mjs",
+      "require": "./dist/hono.js"
+    },
+    "./integrations": {
+      "types": "./dist/integrations.d.ts",
+      "import": "./dist/integrations.mjs",
+      "require": "./dist/integrations.js"
     },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
-      "*": [
-        "./dist/index.d.ts"
-      ]
+      "next": ["./dist/next.d.ts"],
+      "lambda": ["./dist/lambda.d.ts"],
+      "express": ["./dist/express.d.ts"],
+      "hono": ["./dist/hono.d.ts"],
+      "integrations": ["./dist/integrations.d.ts"],
+      "*": ["./dist/index.d.ts"]
     }
   },
   "files": [

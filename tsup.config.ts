@@ -1,7 +1,14 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: {
+    index: 'src/index.ts',
+    next: 'src/integrations/next.ts',
+    lambda: 'src/integrations/lambda.ts',
+    express: 'src/integrations/express.ts',
+    hono: 'src/integrations/hono.ts',
+    integrations: 'src/integrations/index.ts',
+  },
   format: ['cjs', 'esm'],
   dts: true,
   clean: true,
@@ -19,6 +26,6 @@ export default defineConfig({
   shims: true,
   // Banner for ESM
   banner: {
-    js: '/* @lelemon/sdk - LLM Observability */',
+    js: '/* @lelemondev/sdk - LLM Observability */',
   },
 });
