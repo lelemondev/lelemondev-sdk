@@ -27,7 +27,7 @@ export interface LelemonConfig {
 // Provider Detection
 // ─────────────────────────────────────────────────────────────
 
-export type ProviderName = 'openai' | 'anthropic' | 'google' | 'bedrock' | 'unknown';
+export type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'bedrock' | 'unknown';
 
 export interface ProviderInfo {
   name: ProviderName;

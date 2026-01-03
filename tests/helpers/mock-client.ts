@@ -64,3 +64,38 @@ export function createMockAnthropicClient() {
     constructor: { name: 'Anthropic' },
   };
 }
+
+export function createMockGeminiClient(generateContentImpl?: ReturnType<typeof vi.fn>) {
+  const mockModel = {
+    model: 'gemini-2.5-flash',
+    generateContent: generateContentImpl || vi.fn(),
+    generateContentStream: vi.fn(),
+    startChat: vi.fn(() => ({
+      sendMessage: vi.fn(),
+      sendMessageStream: vi.fn(),
+      getHistory: vi.fn().mockResolvedValue([]),
+    })),
+  };
+
+  return {
+    getGenerativeModel: vi.fn(() => mockModel),
+    constructor: { name: 'GoogleGenerativeAI' },
+  };
+}
+
+export function createMockGeminiModel(overrides?: {
+  generateContent?: ReturnType<typeof vi.fn>;
+  generateContentStream?: ReturnType<typeof vi.fn>;
+  startChat?: ReturnType<typeof vi.fn>;
+}) {
+  return {
+    model: 'gemini-2.5-flash',
+    generateContent: overrides?.generateContent || vi.fn(),
+    generateContentStream: overrides?.generateContentStream || vi.fn(),
+    startChat: overrides?.startChat || vi.fn(() => ({
+      sendMessage: vi.fn(),
+      sendMessageStream: vi.fn(),
+      getHistory: vi.fn().mockResolvedValue([]),
+    })),
+  };
+}

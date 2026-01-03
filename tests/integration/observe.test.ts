@@ -5,8 +5,10 @@ import {
   createConverseCommand,
   createMockOpenAIClient,
   createMockAnthropicClient,
+  createMockGeminiClient,
 } from '../helpers/mock-client';
 import { createConverseResponse } from '../fixtures/bedrock';
+import { createGenerateContentResult } from '../fixtures/gemini';
 
 // Mock config module
 vi.mock('../../src/core/config', () => ({
@@ -75,6 +77,29 @@ describe('observe() Integration', () => {
     });
   });
 
+  describe('with Gemini client', () => {
+    it('should wrap GoogleGenerativeAI and trace calls', async () => {
+      const mockResult = createGenerateContentResult();
+      const mockGenerateContent = vi.fn().mockResolvedValue(mockResult);
+      const client = createMockGeminiClient(mockGenerateContent);
+
+      const traced = observe(client);
+
+      expect(traced).not.toBe(client);
+
+      const model = (traced as typeof client).getGenerativeModel({ model: 'gemini-2.5-flash' });
+      await model.generateContent('Hello');
+
+      expect(mockCaptureTrace).toHaveBeenCalledOnce();
+      expect(mockCaptureTrace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+        })
+      );
+    });
+  });
+
   describe('provider detection', () => {
     it('should detect OpenAI client', () => {
       const client = createMockOpenAIClient();
@@ -93,6 +118,13 @@ describe('observe() Integration', () => {
 
     it('should detect Bedrock client', () => {
       const client = createMockBedrockClient();
+      const traced = observe(client);
+
+      expect(traced).not.toBe(client);
+    });
+
+    it('should detect Gemini client', () => {
+      const client = createMockGeminiClient();
       const traced = observe(client);
 
       expect(traced).not.toBe(client);

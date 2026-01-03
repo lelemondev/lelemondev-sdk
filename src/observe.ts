@@ -7,6 +7,7 @@
 import * as openai from './providers/openai';
 import * as anthropic from './providers/anthropic';
 import * as bedrock from './providers/bedrock';
+import * as gemini from './providers/gemini';
 import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
@@ -65,10 +66,17 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
     return bedrock.wrap(client) as T;
   }
 
+  if (gemini.canHandle(client)) {
+    if (config.debug) {
+      console.log('[Lelemon] Wrapping Gemini client');
+    }
+    return gemini.wrap(client) as T;
+  }
+
   // Unknown client type
   console.warn(
     '[Lelemon] Unknown client type. Tracing not enabled. ' +
-    'Supported: OpenAI, Anthropic, Bedrock'
+    'Supported: OpenAI, Anthropic, Bedrock, Gemini'
   );
 
   return client;
