@@ -2,15 +2,18 @@
 /**
  * Generate llms.txt and llms-full.txt for LLM-friendly documentation
  * Following the llms.txt standard: https://llmstxt.org/
+ *
+ * Auto-discovers providers from src/providers/*.ts
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const DOCS_DIR = join(ROOT, 'docs');
+const PROVIDERS_DIR = join(ROOT, 'src', 'providers');
 
 // ─────────────────────────────────────────────────────────────
 // Configuration
@@ -20,14 +23,86 @@ const PACKAGE = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
 const VERSION = PACKAGE.version;
 const DOCS_BASE_URL = 'https://lelemondev.github.io/lelemondev-sdk';
 
+// Files to skip when scanning providers
+const SKIP_FILES = ['base.ts', 'index.ts'];
+
+// ─────────────────────────────────────────────────────────────
+// Provider Discovery
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Discover all providers from src/providers/*.ts
+ */
+function discoverProviders() {
+  const providerFiles = readdirSync(PROVIDERS_DIR)
+    .filter(f => f.endsWith('.ts') && !SKIP_FILES.includes(f));
+
+  const providers = [];
+
+  for (const file of providerFiles) {
+    const content = readFileSync(join(PROVIDERS_DIR, file), 'utf-8');
+    const provider = parseProvider(content, file);
+    if (provider) {
+      providers.push(provider);
+    }
+  }
+
+  return providers.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Parse a provider file to extract metadata
+ */
+function parseProvider(content, filename) {
+  // Extract PROVIDER_NAME
+  const nameMatch = content.match(/export const PROVIDER_NAME[^=]*=\s*['"]([^'"]+)['"]/);
+  if (!nameMatch) return null;
+
+  const name = nameMatch[1];
+
+  // Extract JSDoc header (first block comment)
+  const jsdocMatch = content.match(/^\/\*\*[\s\S]*?\*\//);
+  const jsdoc = jsdocMatch ? jsdocMatch[0] : '';
+
+  // Extract methods from JSDoc (lines starting with " * - ")
+  const methods = [];
+  const methodMatches = jsdoc.matchAll(/\*\s+-\s+([^\n]+)/g);
+  for (const match of methodMatches) {
+    methods.push(match[1].trim());
+  }
+
+  // Check for streaming support
+  const hasStreaming = content.includes('streaming: true') ||
+    content.includes('wrapStream') ||
+    content.includes('AsyncIterable');
+
+  // Extract description from JSDoc (first line after /*)
+  const descMatch = jsdoc.match(/\/\*\*\s*\n\s*\*\s*([^\n]+)/);
+  const description = descMatch ? descMatch[1].trim() : `${capitalize(name)} Provider`;
+
+  return {
+    name,
+    filename: basename(filename, '.ts'),
+    description,
+    methods,
+    streaming: hasStreaming,
+  };
+}
+
+function capitalize(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Content Generation
 // ─────────────────────────────────────────────────────────────
 
-function generateLlmsTxt() {
+function generateLlmsTxt(providers) {
+  const providerList = providers.map(p => capitalize(p.name)).join(', ');
+
   return `# @lelemondev/sdk
 
-> Automatic LLM observability SDK for Node.js. Wrap your OpenAI or Anthropic client with \`observe()\`, and all calls are traced automatically. Zero config, type-safe, with built-in support for Next.js, Express, AWS Lambda, and Hono.
+> Automatic LLM observability SDK for Node.js. Wrap your ${providerList} client with \`observe()\`, and all calls are traced automatically. Zero config, type-safe, with built-in support for Next.js, Express, AWS Lambda, and Hono.
 
 ## Documentation
 
@@ -51,9 +126,13 @@ const response = await openai.chat.completions.create({
 });
 \`\`\`
 
+## Supported Providers
+
+${providers.map(p => `- **${capitalize(p.name)}**: ${p.methods.join(', ') || 'All methods'}${p.streaming ? ' (streaming supported)' : ''}`).join('\n')}
+
 ## Core Concepts
 
-- **observe()**: Wraps LLM clients (OpenAI, Anthropic) with automatic tracing
+- **observe()**: Wraps LLM clients (${providerList}) with automatic tracing
 - **init()**: Initialize SDK with API key and configuration
 - **flush()**: Manually flush pending traces (required in serverless)
 - **Framework integrations**: Auto-flush middleware for Next.js, Express, Lambda, Hono
@@ -64,22 +143,20 @@ Current version: ${VERSION}
 `;
 }
 
-function generateLlmsFullTxt() {
+function generateLlmsFullTxt(providers) {
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf-8');
+  const providerList = providers.map(p => capitalize(p.name)).join(', ');
 
   // Read integration docs
   const integrations = {
-    next: readFileSync(join(ROOT, 'src/integrations/next.ts'), 'utf-8'),
-    lambda: readFileSync(join(ROOT, 'src/integrations/lambda.ts'), 'utf-8'),
-    express: readFileSync(join(ROOT, 'src/integrations/express.ts'), 'utf-8'),
-    hono: readFileSync(join(ROOT, 'src/integrations/hono.ts'), 'utf-8'),
+    next: safeReadFile(join(ROOT, 'src/integrations/next.ts')),
+    lambda: safeReadFile(join(ROOT, 'src/integrations/lambda.ts')),
+    express: safeReadFile(join(ROOT, 'src/integrations/express.ts')),
+    hono: safeReadFile(join(ROOT, 'src/integrations/hono.ts')),
   };
 
-  // Extract JSDoc from integration files
-  const extractJSDoc = (content) => {
-    const match = content.match(/\/\*\*[\s\S]*?\*\//g);
-    return match ? match.join('\n\n') : '';
-  };
+  // Generate provider table
+  const providerTable = generateProviderTable(providers);
 
   return `# @lelemondev/sdk - Complete Documentation
 
@@ -90,6 +167,14 @@ This document contains the complete documentation for @lelemondev/sdk, optimized
 ---
 
 ${readme}
+
+---
+
+# Supported Providers
+
+${providerTable}
+
+${providers.map(p => generateProviderSection(p)).join('\n\n')}
 
 ---
 
@@ -237,7 +322,7 @@ Initialize the SDK. Must be called once before using observe().
 Wrap an LLM client with automatic tracing.
 
 **Parameters:**
-- \`client\`: OpenAI or Anthropic client instance
+- \`client\`: ${providerList} client instance
 - \`options\` (optional):
   - \`sessionId\`: Group traces by session
   - \`userId\`: Associate traces with a user
@@ -260,21 +345,12 @@ Check if tracing is enabled.
 
 ---
 
-# Supported Providers
-
-| Provider | Methods | Streaming |
-|----------|---------|-----------|
-| OpenAI | \`chat.completions.create()\`, \`completions.create()\`, \`embeddings.create()\` | Yes |
-| Anthropic | \`messages.create()\`, \`messages.stream()\` | Yes |
-
----
-
 # Traced Data
 
 Each LLM call automatically captures:
 
-- **provider**: openai, anthropic
-- **model**: gpt-4, claude-3-opus, etc.
+- **provider**: ${providers.map(p => p.name).join(', ')}
+- **model**: gpt-4, claude-3-opus, gemini-pro, etc.
 - **input**: Messages/prompt
 - **output**: Response content
 - **inputTokens**: Token count for input
@@ -338,6 +414,37 @@ Generated for version ${VERSION}
 `;
 }
 
+function generateProviderTable(providers) {
+  const rows = providers.map(p => {
+    const methods = p.methods.length > 0 ? p.methods.map(m => `\`${m}\``).join(', ') : 'All traced methods';
+    const streaming = p.streaming ? 'Yes' : 'No';
+    return `| ${capitalize(p.name)} | ${methods} | ${streaming} |`;
+  });
+
+  return `| Provider | Methods | Streaming |
+|----------|---------|-----------|
+${rows.join('\n')}`;
+}
+
+function generateProviderSection(provider) {
+  return `## ${capitalize(provider.name)} Provider
+
+${provider.description}
+
+**Traced methods:**
+${provider.methods.length > 0 ? provider.methods.map(m => `- \`${m}\``).join('\n') : '- All available methods'}
+
+**Streaming support:** ${provider.streaming ? 'Yes' : 'No'}`;
+}
+
+function safeReadFile(path) {
+  try {
+    return readFileSync(path, 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────
@@ -348,9 +455,13 @@ function main() {
     mkdirSync(DOCS_DIR, { recursive: true });
   }
 
+  // Discover providers
+  const providers = discoverProviders();
+  console.log(`Discovered ${providers.length} providers: ${providers.map(p => p.name).join(', ')}`);
+
   // Generate files
-  const llmsTxt = generateLlmsTxt();
-  const llmsFullTxt = generateLlmsFullTxt();
+  const llmsTxt = generateLlmsTxt(providers);
+  const llmsFullTxt = generateLlmsFullTxt(providers);
 
   // Write files
   writeFileSync(join(DOCS_DIR, 'llms.txt'), llmsTxt);
