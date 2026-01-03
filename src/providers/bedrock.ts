@@ -31,13 +31,26 @@ interface ConverseInput {
   messages?: Array<{ role: string; content: Array<{ text?: string }> }>;
   system?: Array<{ text?: string }>;
   inferenceConfig?: Record<string, unknown>;
+  toolConfig?: Record<string, unknown>;
+  guardrailConfig?: Record<string, unknown>;
+  performanceConfig?: { latency?: string };
+  requestMetadata?: Record<string, string>;
 }
 
 interface ConverseResponse {
   $metadata: { httpStatusCode: number };
-  output?: { message?: { role: string; content: Array<{ text?: string }> } };
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  output?: {
+    message?: { role: string; content: Array<{ text?: string; toolUse?: unknown }> };
+  };
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    cacheReadInputTokens?: number;
+    cacheWriteInputTokens?: number;
+  };
   stopReason?: string;
+  metrics?: { latencyMs?: number };
 }
 
 interface ConverseStreamResponse {
@@ -162,6 +175,13 @@ async function handleConverse(
       durationMs,
       status: 'success',
       streaming: false,
+      metadata: {
+        stopReason: response.stopReason,
+        hasToolUse: extracted.hasToolUse,
+        cacheReadTokens: extracted.cacheReadTokens,
+        cacheWriteTokens: extracted.cacheWriteTokens,
+        latencyMs: response.metrics?.latencyMs,
+      },
     });
 
     return response;
@@ -392,24 +412,36 @@ async function* wrapInvokeModelStream(
 // ─────────────────────────────────────────────────────────────
 
 function extractConverseOutput(response: ConverseResponse): {
-  output: string | null;
+  output: unknown;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  hasToolUse: boolean;
 } {
+  const content = response.output?.message?.content;
+  const hasToolUse = Array.isArray(content) && content.some((c) => c.toolUse);
+
   const output = safeExtract(() => {
-    const content = response.output?.message?.content;
     if (!Array.isArray(content)) return null;
+    // If there's tool use, return the full content structure
+    if (hasToolUse) {
+      return content;
+    }
+    // Otherwise, join text content
     return content.map((c) => c.text || '').join('');
   }, null);
 
-  const inputTokens = isValidNumber(response.usage?.inputTokens)
-    ? response.usage!.inputTokens!
-    : 0;
-  const outputTokens = isValidNumber(response.usage?.outputTokens)
-    ? response.usage!.outputTokens!
-    : 0;
+  const usage = response.usage || {};
 
-  return { output, inputTokens, outputTokens };
+  return {
+    output,
+    inputTokens: isValidNumber(usage.inputTokens) ? usage.inputTokens! : 0,
+    outputTokens: isValidNumber(usage.outputTokens) ? usage.outputTokens! : 0,
+    cacheReadTokens: isValidNumber(usage.cacheReadInputTokens) ? usage.cacheReadInputTokens! : 0,
+    cacheWriteTokens: isValidNumber(usage.cacheWriteInputTokens) ? usage.cacheWriteInputTokens! : 0,
+    hasToolUse,
+  };
 }
 
 function parseInvokeModelBody(body: Uint8Array): {

@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { config } from 'dotenv';
+
+// Force reload .env at test file level (before SDK loads)
+config({ override: true });
 
 /**
  * E2E Tests for AWS Bedrock
@@ -17,6 +21,26 @@ const hasAWSCredentials = (): boolean => {
     process.env.AWS_PROFILE ||
     process.env.AWS_SESSION_TOKEN
   );
+};
+
+// Build explicit credentials config for AWS SDK
+const getAWSConfig = () => {
+  const baseConfig: Record<string, unknown> = {
+    region: process.env.AWS_REGION || 'us-east-1',
+  };
+
+  // Explicitly pass credentials if from .env
+  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    baseConfig.credentials = {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      ...(process.env.AWS_SESSION_TOKEN && {
+        sessionToken: process.env.AWS_SESSION_TOKEN,
+      }),
+    };
+  }
+
+  return baseConfig;
 };
 
 describe.skipIf(!hasAWSCredentials())('Bedrock E2E Tests', () => {
@@ -60,9 +84,7 @@ describe.skipIf(!hasAWSCredentials())('Bedrock E2E Tests', () => {
       return;
     }
 
-    const client = new (BedrockRuntimeClient as new (config: unknown) => unknown)({
-      region: process.env.AWS_REGION || 'us-east-1',
-    });
+    const client = new (BedrockRuntimeClient as new (config: unknown) => unknown)(getAWSConfig());
 
     const traced = observe(client);
 
@@ -91,9 +113,7 @@ describe.skipIf(!hasAWSCredentials())('Bedrock E2E Tests', () => {
       return;
     }
 
-    const client = new (BedrockRuntimeClient as new (config: unknown) => unknown)({
-      region: process.env.AWS_REGION || 'us-east-1',
-    });
+    const client = new (BedrockRuntimeClient as new (config: unknown) => unknown)(getAWSConfig());
 
     const traced = observe(client);
 
@@ -131,9 +151,7 @@ describe.skipIf(!hasAWSCredentials())('Bedrock E2E Tests', () => {
       return;
     }
 
-    const client = new (BedrockRuntimeClient as new (config: unknown) => unknown)({
-      region: process.env.AWS_REGION || 'us-east-1',
-    });
+    const client = new (BedrockRuntimeClient as new (config: unknown) => unknown)(getAWSConfig());
 
     const traced = observe(client);
 
