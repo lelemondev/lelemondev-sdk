@@ -6,6 +6,13 @@
 
 Automatic LLM observability for Node.js. Wrap your client, everything is traced.
 
+## LLM Agent Docs
+
+```
+https://lelemondev.github.io/lelemondev-sdk/llms.txt
+https://lelemondev.github.io/lelemondev-sdk/llms-full.txt
+```
+
 ## Features
 
 - **Automatic Tracing** - Wrap your client, all calls are traced
