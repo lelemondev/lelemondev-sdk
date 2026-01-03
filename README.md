@@ -4,15 +4,16 @@
 [![CI](https://github.com/lelemondev/lelemondev-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/lelemondev/lelemondev-sdk/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Fire-and-forget LLM observability for Node.js. Track your AI agents with 3 lines of code.
+Automatic LLM observability for Node.js. Track your AI agents with zero code changes.
 
 ## Features
 
-- 🔥 **Fire-and-forget** - Never blocks your code
-- 📦 **Auto-batching** - Efficient network usage
-- ⚡ **Zero config** - Works out of the box
-- 🛡️ **Error-safe** - Never crashes your app
-- 🌐 **Serverless-ready** - Built-in flush for Lambda/Vercel
+- **Automatic Tracing** - Wrap your client, everything is traced
+- **Fire-and-forget** - Never blocks your code
+- **Auto-batching** - Efficient network usage
+- **Streaming Support** - Full support for streaming responses
+- **Type-safe** - Preserves your client's TypeScript types
+- **Serverless-ready** - Built-in flush for Lambda/Vercel
 
 ## Installation
 
@@ -23,25 +24,33 @@ npm install @lelemondev/sdk
 ## Quick Start
 
 ```typescript
-import { init, trace, flush } from '@lelemondev/sdk';
+import { init, observe, flush } from '@lelemondev/sdk';
+import OpenAI from 'openai';
 
-// Initialize once at app startup
+// 1. Initialize once at app startup
 init({ apiKey: process.env.LELEMON_API_KEY });
 
-// Trace your agent (fire-and-forget, no awaits needed!)
-const t = trace({ input: userMessage });
+// 2. Wrap your client
+const openai = observe(new OpenAI());
 
-try {
-  const result = await myAgent(userMessage);
-  t.success(result.messages);  // Sync, doesn't block
-} catch (error) {
-  t.error(error);              // Sync, doesn't block
-  throw error;
-}
+// 3. Use normally - all calls are traced automatically
+const response = await openai.chat.completions.create({
+  model: 'gpt-4',
+  messages: [{ role: 'user', content: 'Hello!' }],
+});
 
-// For serverless: flush before response
+// 4. For serverless: flush before response
 await flush();
 ```
+
+That's it! No manual tracing code needed.
+
+## Supported Providers
+
+| Provider | Status | Methods |
+|----------|--------|---------|
+| OpenAI | Supported | `chat.completions.create()`, `completions.create()`, `embeddings.create()` |
+| Anthropic | Supported | `messages.create()`, `messages.stream()` |
 
 ## API Reference
 
@@ -54,50 +63,40 @@ init({
   apiKey: 'le_xxx',           // Required (or set LELEMON_API_KEY env var)
   endpoint: 'https://...',    // Optional, custom endpoint
   debug: false,               // Optional, enable debug logs
+  disabled: false,            // Optional, disable all tracing
   batchSize: 10,              // Optional, items per batch
   flushIntervalMs: 1000,      // Optional, auto-flush interval
+  requestTimeoutMs: 10000,    // Optional, HTTP request timeout
 });
 ```
 
-### `trace(options)`
+### `observe(client, options?)`
 
-Start a new trace. Returns a `Trace` object.
+Wrap an LLM client with automatic tracing. Returns the same client type.
 
 ```typescript
-const t = trace({
-  input: userMessage,         // Required, the input to your agent
+import Anthropic from '@anthropic-ai/sdk';
+
+const anthropic = observe(new Anthropic(), {
   sessionId: 'session-123',   // Optional, group related traces
   userId: 'user-456',         // Optional, identify the user
-  name: 'chat-agent',         // Optional, name for this trace
-  metadata: { ... },          // Optional, custom metadata
-  tags: ['prod', 'v2'],       // Optional, tags for filtering
+  metadata: { source: 'api' }, // Optional, custom metadata
+  tags: ['production'],       // Optional, tags for filtering
 });
 ```
 
-### `Trace.success(messages)`
+### `createObserve(defaultOptions)`
 
-Complete the trace successfully. Fire-and-forget (no await needed).
-
-```typescript
-t.success(result.messages);
-```
-
-### `Trace.error(error, messages?)`
-
-Complete the trace with an error. Fire-and-forget (no await needed).
+Create a scoped observe function with preset options.
 
 ```typescript
-t.error(error);
-t.error(error, partialMessages);  // Include messages up to failure
-```
+const observeWithSession = createObserve({
+  sessionId: 'session-123',
+  userId: 'user-456',
+});
 
-### `Trace.log(response)`
-
-Log an LLM response for token tracking (optional).
-
-```typescript
-const response = await openai.chat.completions.create(...);
-t.log(response);  // Extracts model, tokens automatically
+const openai = observeWithSession(new OpenAI());
+const anthropic = observeWithSession(new Anthropic());
 ```
 
 ### `flush()`
@@ -108,59 +107,111 @@ Wait for all pending traces to be sent. Use in serverless environments.
 await flush();
 ```
 
+### `isEnabled()`
+
+Check if tracing is enabled.
+
+```typescript
+if (isEnabled()) {
+  console.log('Tracing is active');
+}
+```
+
+## Streaming Support
+
+Both OpenAI and Anthropic streaming are fully supported:
+
+```typescript
+// OpenAI streaming
+const stream = await openai.chat.completions.create({
+  model: 'gpt-4',
+  messages: [{ role: 'user', content: 'Hello!' }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content || '');
+}
+// Trace is captured automatically when stream completes
+
+// Anthropic streaming
+const stream = anthropic.messages.stream({
+  model: 'claude-3-opus-20240229',
+  max_tokens: 1024,
+  messages: [{ role: 'user', content: 'Hello!' }],
+});
+
+for await (const event of stream) {
+  // Process events
+}
+// Trace is captured automatically
+```
+
 ## Serverless Usage
 
 ### Vercel (Next.js)
 
 ```typescript
 import { waitUntil } from '@vercel/functions';
-import { trace, flush } from '@lelemondev/sdk';
+import { init, observe, flush } from '@lelemondev/sdk';
+import OpenAI from 'openai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+const openai = observe(new OpenAI());
 
 export async function POST(req: Request) {
-  const t = trace({ input: message });
+  const { message } = await req.json();
 
-  try {
-    const result = await myAgent(message);
-    t.success(result);
-    return Response.json(result);
-  } catch (error) {
-    t.error(error);
-    throw error;
-  } finally {
-    waitUntil(flush());  // Flush after response
-  }
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [{ role: 'user', content: message }],
+  });
+
+  waitUntil(flush());  // Flush after response
+  return Response.json(response.choices[0].message);
 }
 ```
 
 ### AWS Lambda
 
 ```typescript
-import { trace, flush } from '@lelemondev/sdk';
+import { init, observe, flush } from '@lelemondev/sdk';
+import OpenAI from 'openai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+const openai = observe(new OpenAI());
 
 export const handler = async (event) => {
-  const t = trace({ input: event.body });
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [{ role: 'user', content: event.body }],
+  });
 
-  try {
-    const result = await myAgent(event.body);
-    t.success(result);
-    return { statusCode: 200, body: JSON.stringify(result) };
-  } catch (error) {
-    t.error(error);
-    throw error;
-  } finally {
-    await flush();  // Always flush before Lambda ends
-  }
+  await flush();  // Always flush before Lambda ends
+  return { statusCode: 200, body: JSON.stringify(response) };
 };
 ```
 
-## Supported Providers
+## What Gets Traced
 
-| Provider | Auto-detected |
-|----------|---------------|
-| OpenAI | ✅ |
-| Anthropic | ✅ |
-| Google Gemini | ✅ |
-| AWS Bedrock | ✅ |
+Each LLM call automatically captures:
+
+- **Provider** - openai, anthropic
+- **Model** - gpt-4, claude-3-opus, etc.
+- **Input** - Messages/prompt (sanitized)
+- **Output** - Response content
+- **Tokens** - Input and output token counts
+- **Duration** - Request latency in ms
+- **Status** - success or error
+- **Streaming** - Whether streaming was used
+
+## Security
+
+The SDK automatically sanitizes sensitive data:
+
+- API keys and tokens are redacted
+- Large payloads are truncated
+- Errors are captured without stack traces
 
 ## Environment Variables
 
@@ -170,4 +221,4 @@ export const handler = async (event) => {
 
 ## License
 
-MIT © [Lelemon](https://lelemon.dev)
+MIT

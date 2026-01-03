@@ -1,41 +1,44 @@
 /**
  * Lelemon SDK
- * Fire-and-forget LLM observability
+ * Automatic LLM observability
  *
  * @example
- * import { init, trace, flush } from '@lelemondev/sdk';
+ * import { init, observe, flush } from '@lelemondev/sdk';
+ * import OpenAI from 'openai';
  *
  * // Initialize once
  * init({ apiKey: process.env.LELEMON_API_KEY });
  *
- * // Trace your agent (fire-and-forget, no awaits needed)
- * const t = trace({ input: userMessage });
- * try {
- *   const result = await myAgent(userMessage);
- *   t.success(result.messages);
- * } catch (error) {
- *   t.error(error);
- *   throw error;
- * }
+ * // Wrap your client - all calls are traced automatically
+ * const openai = observe(new OpenAI());
+ *
+ * // Use normally - no code changes needed
+ * const response = await openai.chat.completions.create({
+ *   model: 'gpt-4',
+ *   messages: [{ role: 'user', content: 'Hello!' }],
+ * });
  *
  * // For serverless: flush before response
  * await flush();
  */
 
+// ─────────────────────────────────────────────────────────────
 // Main API
-export { init, trace, flush, isEnabled, Trace } from './tracer';
+// ─────────────────────────────────────────────────────────────
 
+// Configuration
+export { init, flush, isEnabled } from './core/config';
+
+// Observe (primary API)
+export { observe, createObserve } from './observe';
+
+// ─────────────────────────────────────────────────────────────
 // Types
+// ─────────────────────────────────────────────────────────────
+
 export type {
   LelemonConfig,
-  TraceOptions,
-  Message,
-  OpenAIMessage,
-  AnthropicMessage,
-  ParsedTrace,
-  ParsedLLMCall,
-  ParsedToolCall,
-} from './types';
+  ObserveOptions,
+  ProviderName,
+} from './core/types';
 
-// Parser (for advanced usage)
-export { parseMessages, parseResponse, parseBedrockResponse } from './parser';
