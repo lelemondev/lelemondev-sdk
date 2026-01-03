@@ -149,8 +149,10 @@ export default app;
 
 | Provider | Status | Methods |
 |----------|--------|---------|
-| OpenAI | Supported | `chat.completions.create()`, `completions.create()`, `embeddings.create()` |
-| Anthropic | Supported | `messages.create()`, `messages.stream()` |
+| OpenAI | ✅ | `chat.completions.create()`, `responses.create()`, `completions.create()`, `embeddings.create()` |
+| Anthropic | ✅ | `messages.create()`, `messages.stream()` |
+| AWS Bedrock | ✅ | `ConverseCommand`, `ConverseStreamCommand`, `InvokeModelCommand` |
+| Google Gemini | ✅ | `generateContent()`, `generateContentStream()`, `chat.sendMessage()` |
 
 ## API Reference
 
@@ -192,7 +194,7 @@ await flush();
 
 ## Streaming
 
-Both OpenAI and Anthropic streaming are fully supported:
+All providers support streaming:
 
 ```typescript
 const stream = await openai.chat.completions.create({
@@ -211,8 +213,8 @@ for await (const chunk of stream) {
 
 Each LLM call automatically captures:
 
-- **Provider** - openai, anthropic
-- **Model** - gpt-4, claude-3-opus, etc.
+- **Provider** - openai, anthropic, bedrock, gemini
+- **Model** - gpt-4, claude-3-opus, gemini-pro, etc.
 - **Input** - Messages/prompt (sanitized)
 - **Output** - Response content
 - **Tokens** - Input and output counts
