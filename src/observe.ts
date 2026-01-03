@@ -88,6 +88,7 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
 
 interface OpenAIShape {
   chat?: { completions: { create: CallableFunction } };
+  responses?: { create: CallableFunction };
   completions?: { create: CallableFunction };
   embeddings?: { create: CallableFunction };
 }
@@ -101,6 +102,10 @@ function wrapOpenAI(client: unknown): unknown {
 
       if (prop === 'chat' && value && typeof value === 'object') {
         return wrapOpenAIChat(value as OpenAIShape['chat']);
+      }
+
+      if (prop === 'responses' && value && typeof value === 'object') {
+        return wrapOpenAIResponses(value as OpenAIShape['responses']);
       }
 
       if (prop === 'completions' && value && typeof value === 'object') {
@@ -137,6 +142,20 @@ function wrapOpenAIChatCompletions(completions: { create: CallableFunction }) {
 
       if (prop === 'create' && typeof value === 'function') {
         return openai.wrapChatCreate(value.bind(target));
+      }
+
+      return value;
+    },
+  });
+}
+
+function wrapOpenAIResponses(responses: OpenAIShape['responses']) {
+  return new Proxy(responses!, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+
+      if (prop === 'create' && typeof value === 'function') {
+        return openai.wrapResponsesCreate(value.bind(target));
       }
 
       return value;

@@ -112,6 +112,7 @@
     "@types/node": "^20.0.0",
     "@vitest/coverage-v8": "^2.0.0",
     "dotenv": "^17.2.3",
+    "openai": "^6.15.0",
     "tsup": "^8.5.1",
     "typedoc": "^0.28.15",
     "typescript": "^5.9.3",

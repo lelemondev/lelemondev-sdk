@@ -3,6 +3,7 @@
  *
  * Wraps the OpenAI SDK to automatically capture:
  * - chat.completions.create()
+ * - responses.create() (new Responses API - recommended)
  * - completions.create() (legacy)
  * - embeddings.create()
  *
@@ -22,6 +23,9 @@ interface OpenAIClient {
     completions: {
       create: (...args: unknown[]) => Promise<unknown>;
     };
+  };
+  responses?: {
+    create: (...args: unknown[]) => Promise<unknown>;
   };
   completions?: {
     create: (...args: unknown[]) => Promise<unknown>;
@@ -52,6 +56,28 @@ interface StreamChunk {
   };
 }
 
+// Responses API types (new recommended API)
+interface ResponsesRequest {
+  model?: string;
+  input?: string | unknown[];
+  instructions?: string;
+  stream?: boolean;
+  tools?: unknown[];
+  [key: string]: unknown;
+}
+
+interface ResponsesResult {
+  id?: string;
+  output?: unknown[];
+  output_text?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+  };
+  [key: string]: unknown;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Provider Implementation
 // ─────────────────────────────────────────────────────────────
@@ -68,9 +94,9 @@ export function canHandle(client: unknown): boolean {
   const constructorName = client.constructor?.name;
   if (constructorName === 'OpenAI') return true;
 
-  // Check for characteristic properties
+  // Check for characteristic properties (chat.completions or responses)
   const c = client as Record<string, unknown>;
-  return !!(c.chat && c.completions);
+  return !!(c.chat && c.completions) || !!c.responses;
 }
 
 /**
@@ -82,9 +108,13 @@ export function wrap(client: unknown): unknown {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
-      // Wrap nested objects (chat, completions, etc.)
+      // Wrap nested objects (chat, completions, responses, etc.)
       if (prop === 'chat' && value && typeof value === 'object') {
         return wrapChatNamespace(value as OpenAIClient['chat']);
+      }
+
+      if (prop === 'responses' && value && typeof value === 'object') {
+        return wrapResponsesNamespace(value as OpenAIClient['responses']);
       }
 
       if (prop === 'completions' && value && typeof value === 'object') {
@@ -127,6 +157,22 @@ function wrapChatCompletions(completions: { create: (...args: unknown[]) => Prom
 
       if (prop === 'create' && typeof value === 'function') {
         return wrapChatCreate(value.bind(target));
+      }
+
+      return value;
+    },
+  });
+}
+
+function wrapResponsesNamespace(responses: OpenAIClient['responses']) {
+  if (!responses) return responses;
+
+  return new Proxy(responses, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+
+      if (prop === 'create' && typeof value === 'function') {
+        return wrapResponsesCreate(value.bind(target));
       }
 
       return value;
@@ -208,6 +254,56 @@ export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unkno
         provider: PROVIDER_NAME,
         model: request.model || 'unknown',
         input: request.messages,
+        error: error instanceof Error ? error : new Error(String(error)),
+        durationMs,
+        streaming: isStreaming,
+      });
+
+      throw error;
+    }
+  };
+}
+
+/**
+ * Wrap responses.create() - new Responses API
+ */
+export function wrapResponsesCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
+  return async function wrappedResponsesCreate(...args: unknown[]): Promise<unknown> {
+    const startTime = Date.now();
+    const request = (args[0] || {}) as ResponsesRequest;
+    const isStreaming = request.stream === true;
+
+    try {
+      const response = await originalFn(...args);
+
+      if (isStreaming && isAsyncIterable(response)) {
+        return wrapResponsesStream(response, request, startTime);
+      }
+
+      const durationMs = Date.now() - startTime;
+      const extracted = extractResponsesResult(response as ResponsesResult);
+
+      captureTrace({
+        provider: PROVIDER_NAME,
+        model: request.model || 'unknown',
+        input: { instructions: request.instructions, input: request.input },
+        output: extracted.output,
+        inputTokens: extracted.inputTokens,
+        outputTokens: extracted.outputTokens,
+        durationMs,
+        status: 'success',
+        streaming: false,
+        metadata: extracted.metadata,
+      });
+
+      return response;
+    } catch (error) {
+      const durationMs = Date.now() - startTime;
+
+      captureError({
+        provider: PROVIDER_NAME,
+        model: request.model || 'unknown',
+        input: { instructions: request.instructions, input: request.input },
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs,
         streaming: isStreaming,
@@ -460,5 +556,117 @@ function extractStreamChunkTokens(chunk: StreamChunk): TokenUsage | null {
     };
   } catch {
     return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Responses API Helpers
+// ─────────────────────────────────────────────────────────────
+
+function extractResponsesResult(response: ResponsesResult): {
+  output: unknown;
+  inputTokens: number;
+  outputTokens: number;
+  metadata: Record<string, unknown>;
+} {
+  // output_text is the primary text output
+  let output: unknown = response.output_text || null;
+
+  // If no output_text, try to extract from output array
+  if (!output && response.output && Array.isArray(response.output)) {
+    const textItems = response.output
+      .filter((item: unknown) => {
+        const i = item as Record<string, unknown>;
+        return i.type === 'message' || i.type === 'text';
+      })
+      .map((item: unknown) => {
+        const i = item as Record<string, unknown>;
+        if (i.type === 'message' && i.content) {
+          const content = i.content as Array<{ type: string; text?: string }>;
+          return content
+            .filter((c) => c.type === 'text' || c.type === 'output_text')
+            .map((c) => c.text || '')
+            .join('');
+        }
+        return (i as { text?: string }).text || '';
+      });
+    output = textItems.join('');
+  }
+
+  const usage = response.usage || {};
+  const inputTokens = isValidNumber(usage.input_tokens) ? usage.input_tokens! : 0;
+  const outputTokens = isValidNumber(usage.output_tokens) ? usage.output_tokens! : 0;
+
+  const metadata: Record<string, unknown> = {};
+  if (response.id) {
+    metadata.responseId = response.id;
+  }
+
+  return {
+    output,
+    inputTokens,
+    outputTokens,
+    metadata: Object.keys(metadata).length > 0 ? metadata : {},
+  };
+}
+
+async function* wrapResponsesStream(
+  stream: AsyncIterable<unknown>,
+  request: ResponsesRequest,
+  startTime: number
+): AsyncIterable<unknown> {
+  const chunks: string[] = [];
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let error: Error | null = null;
+
+  try {
+    for await (const event of stream) {
+      const e = event as Record<string, unknown>;
+
+      // Extract text content from streaming events
+      if (e.type === 'response.output_text.delta' && e.delta) {
+        chunks.push(e.delta as string);
+      }
+
+      // Extract usage from done event
+      if (e.type === 'response.done' && e.response) {
+        const resp = e.response as ResponsesResult;
+        if (resp.usage) {
+          inputTokens = resp.usage.input_tokens || 0;
+          outputTokens = resp.usage.output_tokens || 0;
+        }
+      }
+
+      yield event;
+    }
+  } catch (err) {
+    error = err instanceof Error ? err : new Error(String(err));
+    throw err;
+  } finally {
+    const durationMs = Date.now() - startTime;
+
+    if (error) {
+      captureError({
+        provider: PROVIDER_NAME,
+        model: request.model || 'unknown',
+        input: { instructions: request.instructions, input: request.input },
+        error,
+        durationMs,
+        streaming: true,
+      });
+    } else {
+      captureTrace({
+        provider: PROVIDER_NAME,
+        model: request.model || 'unknown',
+        input: { instructions: request.instructions, input: request.input },
+        output: chunks.join(''),
+        inputTokens,
+        outputTokens,
+        durationMs,
+        status: 'success',
+        streaming: true,
+      });
+    }
   }
 }
