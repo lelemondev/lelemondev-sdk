@@ -46,7 +46,110 @@ const response = await openai.chat.completions.create({
 });
 ```
 
+## Usage Without Framework Integrations
+
+The SDK works with **any Node.js application**. Framework integrations are optional - they just automate the `flush()` call.
+
+### Long-running Processes (Servers, Workers)
+
+For long-running processes, the SDK auto-flushes every second (configurable via `flushIntervalMs`):
+
+```typescript
+import { init, observe } from '@lelemondev/sdk';
+import OpenAI from 'openai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+const openai = observe(new OpenAI());
+
+// In your HTTP server, WebSocket handler, queue worker, etc.
+async function handleRequest(userId: string, message: string) {
+  const client = observe(new OpenAI(), { userId });
+
+  const result = await client.chat.completions.create({
+    model: 'gpt-4',
+    messages: [{ role: 'user', content: message }],
+  });
+
+  return result.choices[0].message;
+  // Traces are auto-flushed in the background (every 1s by default)
+}
+```
+
+### Short-lived Processes (Scripts, Serverless, CLI)
+
+For scripts or serverless functions, call `flush()` before the process exits:
+
+```typescript
+import { init, observe, flush } from '@lelemondev/sdk';
+import OpenAI from 'openai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+const openai = observe(new OpenAI());
+
+async function main() {
+  const result = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [{ role: 'user', content: 'Hello!' }],
+  });
+
+  console.log(result.choices[0].message.content);
+
+  // IMPORTANT: Flush before exit to ensure traces are sent
+  await flush();
+}
+
+main();
+```
+
+### Custom HTTP Server (No Framework)
+
+```typescript
+import http from 'http';
+import { init, observe, flush } from '@lelemondev/sdk';
+import OpenAI from 'openai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+
+const server = http.createServer(async (req, res) => {
+  if (req.method === 'POST' && req.url === '/chat') {
+    const openai = observe(new OpenAI(), {
+      userId: req.headers['x-user-id'] as string,
+    });
+
+    const result = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: 'Hello!' }],
+    });
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result.choices[0].message));
+    // Auto-flush handles this in background
+  }
+});
+
+// Graceful shutdown - flush remaining traces
+process.on('SIGTERM', async () => {
+  await flush();
+  server.close();
+});
+
+server.listen(3000);
+```
+
+### When to Use Framework Integrations vs Manual
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Next.js, Express, Hono, Lambda | Use framework integration (auto-flush) |
+| Custom HTTP server | Auto-flush works, add `flush()` on shutdown |
+| CLI scripts | Always call `flush()` before exit |
+| Background workers (Bull, BullMQ) | Auto-flush works, add `flush()` on shutdown |
+| One-off scripts | Always call `flush()` before exit |
+| Long-running daemons | Auto-flush works |
+
 ## Framework Integrations
+
+Framework integrations automate the `flush()` call so you don't have to think about it.
 
 ### Next.js App Router
 
