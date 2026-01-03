@@ -8,6 +8,7 @@
 import type { ProviderName } from '../core/types';
 import * as openai from './openai';
 import * as anthropic from './anthropic';
+import * as bedrock from './bedrock';
 
 // ─────────────────────────────────────────────────────────────
 // Provider Interface
@@ -33,6 +34,11 @@ const providers: Provider[] = [
     name: 'anthropic',
     canHandle: anthropic.canHandle,
     wrap: anthropic.wrap,
+  },
+  {
+    name: 'bedrock',
+    canHandle: bedrock.canHandle,
+    wrap: bedrock.wrap,
   },
 ];
 
@@ -69,7 +75,7 @@ export function wrapClient<T>(client: T): T {
   // Unknown provider - return as-is with warning
   console.warn(
     '[Lelemon] Unknown client type. Tracing not enabled. ' +
-    'Supported: OpenAI, Anthropic'
+    'Supported: OpenAI, Anthropic, Bedrock'
   );
 
   return client;

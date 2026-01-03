@@ -6,6 +6,7 @@
 
 import * as openai from './providers/openai';
 import * as anthropic from './providers/anthropic';
+import * as bedrock from './providers/bedrock';
 import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
@@ -17,7 +18,7 @@ import type { ObserveOptions } from './core/types';
 /**
  * Wrap an LLM client with automatic tracing
  *
- * @param client - OpenAI or Anthropic client instance
+ * @param client - OpenAI, Anthropic, or Bedrock client instance
  * @param options - Optional context (sessionId, userId, etc.)
  * @returns The wrapped client with the same type
  *
@@ -57,10 +58,17 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
     return wrapAnthropic(client) as T;
   }
 
+  if (bedrock.canHandle(client)) {
+    if (config.debug) {
+      console.log('[Lelemon] Wrapping Bedrock client');
+    }
+    return bedrock.wrap(client) as T;
+  }
+
   // Unknown client type
   console.warn(
     '[Lelemon] Unknown client type. Tracing not enabled. ' +
-    'Supported: OpenAI, Anthropic'
+    'Supported: OpenAI, Anthropic, Bedrock'
   );
 
   return client;
