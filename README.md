@@ -198,12 +198,48 @@ Track which user generated each trace and group related conversations.
 
 ### Available Fields
 
-| Field | Purpose | Example |
-|-------|---------|---------|
-| `userId` | Identify the end user | `'user-123'`, `req.user.id` |
-| `sessionId` | Group related traces (e.g., a conversation) | `'conv-abc'`, `req.headers['x-session-id']` |
-| `metadata` | Custom data for filtering/analysis | `{ plan: 'premium', version: '2.1' }` |
-| `tags` | Labels for categorization | `['production', 'chat', 'premium']` |
+| Field | Purpose | In Dashboard |
+|-------|---------|--------------|
+| `userId` | Identify the end user | Shown in "User" column, searchable |
+| `sessionId` | Group related traces (e.g., a conversation) | Shown in "Session" column, searchable |
+| `metadata` | Custom data attached to the trace | Visible in trace detail view |
+| `tags` | Labels for categorization | Shown as badges, filterable dropdown |
+
+#### Field Details
+
+**`userId`** - Identifies who made the request
+```typescript
+userId: req.user.id           // From your auth system
+userId: 'user-123'            // Any string identifier
+userId: req.user.email        // Email works too
+```
+
+**`sessionId`** - Groups multiple calls into one conversation/session
+```typescript
+sessionId: req.body.conversationId   // Chat conversation ID
+sessionId: req.headers['x-session-id'] // From client header
+sessionId: crypto.randomUUID()        // Generate per session
+```
+
+**`metadata`** - Any extra data you want to attach (stored as JSON)
+```typescript
+metadata: {
+  plan: 'premium',           // User's subscription plan
+  feature: 'chat',           // Which feature triggered this
+  version: '2.1.0',          // Your app version
+  environment: 'production', // Environment
+  ip: req.ip,                // Client IP (for debugging)
+  customField: 'any value',  // Anything you need
+}
+```
+
+**`tags`** - Quick labels for filtering (array of strings)
+```typescript
+tags: ['production']                    // Environment
+tags: ['chat', 'premium']               // Feature + plan
+tags: ['api', 'v2']                     // Service + version
+tags: [tenantId, 'high-priority']       // Multi-tenant + priority
+```
 
 ### Basic Usage
 
