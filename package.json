@@ -1,6 +1,6 @@
 {
   "name": "@lelemondev/sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Fire-and-forget LLM observability. 3 lines of code.",
   "author": "Lelemon <info@lelemon.dev>",
   "license": "MIT",
