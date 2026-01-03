@@ -35,9 +35,12 @@ export interface LambdaContext {
 }
 
 /**
- * Generic Lambda handler type
+ * Generic AWS Lambda handler type
+ *
+ * @typeParam TEvent - The event type (e.g., APIGatewayProxyEvent)
+ * @typeParam TResult - The result type (e.g., APIGatewayProxyResult)
  */
-type LambdaHandler<TEvent = unknown, TResult = unknown> = (
+export type LambdaHandler<TEvent = unknown, TResult = unknown> = (
   event: TEvent,
   context: LambdaContext
 ) => Promise<TResult>;

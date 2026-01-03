@@ -97,7 +97,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "docs": "typedoc",
+    "docs": "typedoc && node scripts/generate-llms-txt.mjs",
     "prepublishOnly": "npm run build",
     "lint": "eslint src/",
     "test": "vitest",

@@ -19,7 +19,6 @@
     "GitHub": "https://github.com/lelemondev/lelemondev-sdk",
     "npm": "https://www.npmjs.com/package/@lelemondev/sdk"
   },
-  "customCss": "",
   "hideGenerator": true,
   "searchInComments": true
 }

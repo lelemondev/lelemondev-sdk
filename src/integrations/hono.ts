@@ -18,12 +18,18 @@ import { flush } from '../core/config';
 // Types (minimal to avoid requiring hono as dependency)
 // ─────────────────────────────────────────────────────────────
 
-interface ExecutionContext {
+/**
+ * Execution context for edge runtimes (Cloudflare Workers, Deno Deploy)
+ */
+export interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
 }
 
-interface HonoContext {
+/**
+ * Minimal Hono context type (avoids requiring hono as dependency)
+ */
+export interface HonoContext {
   req: {
     raw: Request;
     [key: string]: unknown;
@@ -33,9 +39,18 @@ interface HonoContext {
   [key: string]: unknown;
 }
 
-type NextFunction = () => Promise<void>;
+/**
+ * Hono next function type
+ */
+export type HonoNextFunction = () => Promise<void>;
 
-type HonoMiddleware = (c: HonoContext, next: NextFunction) => Promise<void>;
+/**
+ * Hono middleware function type
+ *
+ * @param c - Hono context object
+ * @param next - Next function to continue middleware chain
+ */
+export type HonoMiddleware = (c: HonoContext, next: HonoNextFunction) => Promise<void>;
 
 // ─────────────────────────────────────────────────────────────
 // Middleware

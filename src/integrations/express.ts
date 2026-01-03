@@ -17,21 +17,37 @@ import { flush } from '../core/config';
 // Types (minimal to avoid requiring express as dependency)
 // ─────────────────────────────────────────────────────────────
 
-interface ExpressRequest {
+/**
+ * Minimal Express request type (avoids requiring express as dependency)
+ */
+export interface ExpressRequest {
   [key: string]: unknown;
 }
 
-interface ExpressResponse {
+/**
+ * Minimal Express response type (avoids requiring express as dependency)
+ */
+export interface ExpressResponse {
   on(event: 'finish' | 'close' | 'error', listener: () => void): this;
   [key: string]: unknown;
 }
 
-type NextFunction = (error?: unknown) => void;
+/**
+ * Express next function type
+ */
+export type ExpressNextFunction = (error?: unknown) => void;
 
-type ExpressMiddleware = (
+/**
+ * Express middleware function type
+ *
+ * @param req - Express request object
+ * @param res - Express response object
+ * @param next - Next function to pass control
+ */
+export type ExpressMiddleware = (
   req: ExpressRequest,
   res: ExpressResponse,
-  next: NextFunction
+  next: ExpressNextFunction
 ) => void;
 
 // ─────────────────────────────────────────────────────────────

@@ -20,7 +20,12 @@ import { flush } from '../core/config';
 // Types
 // ─────────────────────────────────────────────────────────────
 
-type NextRouteHandler<TContext = unknown> = (
+/**
+ * Next.js App Router handler type
+ *
+ * @typeParam TContext - Optional context type for dynamic route parameters
+ */
+export type NextRouteHandler<TContext = unknown> = (
   request: Request,
   context?: TContext
 ) => Response | Promise<Response>;
