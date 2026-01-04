@@ -8,6 +8,7 @@ import * as openai from './providers/openai';
 import * as anthropic from './providers/anthropic';
 import * as bedrock from './providers/bedrock';
 import * as gemini from './providers/gemini';
+import * as openrouter from './providers/openrouter';
 import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
@@ -45,6 +46,14 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   }
 
   // Detect and wrap based on client shape
+  // Note: OpenRouter must be checked BEFORE OpenAI because it uses the OpenAI SDK
+  if (openrouter.canHandle(client)) {
+    if (config.debug) {
+      console.log('[Lelemon] Wrapping OpenRouter client');
+    }
+    return openrouter.wrap(client) as T;
+  }
+
   if (openai.canHandle(client)) {
     if (config.debug) {
       console.log('[Lelemon] Wrapping OpenAI client');
@@ -76,7 +85,7 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   // Unknown client type
   console.warn(
     '[Lelemon] Unknown client type. Tracing not enabled. ' +
-    'Supported: OpenAI, Anthropic, Bedrock, Gemini'
+    'Supported: OpenAI, OpenRouter, Anthropic, Bedrock, Gemini'
   );
 
   return client;

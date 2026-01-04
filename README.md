@@ -253,9 +253,39 @@ export default app;
 | Provider | Status | Methods |
 |----------|--------|---------|
 | OpenAI | ✅ | `chat.completions.create()`, `responses.create()`, `completions.create()`, `embeddings.create()` |
+| OpenRouter | ✅ | `chat.completions.create()` (access to 400+ models) |
 | Anthropic | ✅ | `messages.create()`, `messages.stream()` |
 | AWS Bedrock | ✅ | `ConverseCommand`, `ConverseStreamCommand`, `InvokeModelCommand` |
 | Google Gemini | ✅ | `generateContent()`, `generateContentStream()`, `chat.sendMessage()` |
+
+### OpenRouter
+
+[OpenRouter](https://openrouter.ai) provides unified access to 400+ models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API.
+
+```typescript
+import { init, observe } from '@lelemondev/sdk';
+import OpenAI from 'openai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+
+// Configure OpenAI SDK to use OpenRouter
+const openrouter = observe(new OpenAI({
+  baseURL: 'https://openrouter.ai/api/v1',
+  apiKey: process.env.OPENROUTER_API_KEY,
+  defaultHeaders: {
+    'HTTP-Referer': 'https://your-app.com', // Optional: for OpenRouter rankings
+    'X-Title': 'Your App Name',             // Optional: for OpenRouter rankings
+  },
+}));
+
+// Access any model through OpenRouter
+const response = await openrouter.chat.completions.create({
+  model: 'anthropic/claude-3-opus',  // or 'openai/gpt-4', 'google/gemini-pro', etc.
+  messages: [{ role: 'user', content: 'Hello!' }],
+});
+```
+
+Models are specified in `provider/model` format (e.g., `anthropic/claude-3-opus`, `openai/gpt-4`, `meta-llama/llama-3-70b`). See [OpenRouter Models](https://openrouter.ai/models) for the full list.
 
 ## API Reference
 
