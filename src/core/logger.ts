@@ -82,11 +82,10 @@ export function traceCapture(provider: string, model: string, durationMs: number
 }
 
 /**
- * Log when a trace capture fails
+ * Log when a trace capture fails (always visible)
  */
-export function traceCaptureError(provider: string, error: Error): void {
-  if (!isDebugEnabled()) return;
-  console.log(`${PREFIX} Failed to capture trace: provider=${provider} error=${error.message}`);
+export function traceCaptureError(provider: string, err: Error): void {
+  console.error(`${PREFIX} Failed to capture trace: provider=${provider} error=${err.message}`);
 }
 
 /**
@@ -126,12 +125,11 @@ export function batchSuccess(count: number, durationMs: number): void {
 }
 
 /**
- * Log batch send failure
+ * Log batch send failure (always visible - errors should never be silent)
  */
-export function batchError(count: number, error: unknown): void {
-  if (!isDebugEnabled()) return;
-  const message = error instanceof Error ? error.message : String(error);
-  console.log(`${PREFIX} Batch send failed: count=${count} error=${message}`);
+export function batchError(count: number, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`${PREFIX} Batch send failed: count=${count} error=${message}`);
 }
 
 /**

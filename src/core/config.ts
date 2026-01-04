@@ -6,7 +6,7 @@
 
 import type { LelemonConfig } from './types';
 import { Transport } from './transport';
-import { setDebug, info, warn } from './logger';
+import { setDebug, info, warn, debug } from './logger';
 
 // ─────────────────────────────────────────────────────────────
 // Global State
@@ -43,7 +43,12 @@ export function init(config: LelemonConfig = {}): void {
   globalTransport = createTransport(config);
   initialized = true;
 
-  info('SDK initialized successfully');
+  // Log status after transport is created
+  if (globalTransport.isEnabled()) {
+    info('SDK initialized - tracing enabled');
+  } else {
+    debug('SDK initialized - tracing disabled (no API key or explicitly disabled)');
+  }
 }
 
 /**
