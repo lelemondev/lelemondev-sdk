@@ -15,7 +15,7 @@ export interface LelemonConfig {
   apiKey?: string;
 
   /**
-   * API endpoint (default: https://api.lelemon.dev)
+   * API endpoint (default: https://lelemon.dev)
    */
   endpoint?: string;
 

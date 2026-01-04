@@ -23,7 +23,7 @@ import type {
   ParsedLLMCall,
 } from './types';
 
-const DEFAULT_ENDPOINT = 'https://api.lelemon.dev';
+const DEFAULT_ENDPOINT = 'https://lelemon.dev';
 
 // ─────────────────────────────────────────────────────────────
 // Global state
