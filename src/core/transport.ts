@@ -10,6 +10,7 @@
  */
 
 import type { CreateTraceRequest } from './types';
+import { batchSend, batchSuccess, batchError, requestDetails, responseDetails, transportEvent } from './logger';
 
 // ─────────────────────────────────────────────────────────────
 // Configuration
@@ -129,12 +130,14 @@ export class Transport {
   private async sendBatch(items: CreateTraceRequest[]): Promise<void> {
     if (items.length === 0) return;
 
-    this.log(`Sending batch of ${items.length} traces`);
+    const startTime = Date.now();
+    batchSend(items.length, `${this.config.endpoint}/api/v1/ingest`);
 
     try {
       await this.request('POST', '/api/v1/ingest', { events: items });
+      batchSuccess(items.length, Date.now() - startTime);
     } catch (error) {
-      this.log('Batch send failed', error);
+      batchError(items.length, error);
       // Don't rethrow - observability should never crash the app
     }
   }
@@ -142,10 +145,15 @@ export class Transport {
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
     const url = `${this.config.endpoint}${path}`;
     const controller = new AbortController();
+    const bodyStr = body ? JSON.stringify(body) : undefined;
+
+    requestDetails(method, url, bodyStr?.length ?? 0);
 
     const timeoutId = setTimeout(() => {
       controller.abort();
     }, this.config.requestTimeoutMs);
+
+    const startTime = Date.now();
 
     try {
       const response = await fetch(url, {
@@ -154,11 +162,12 @@ export class Transport {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.config.apiKey}`,
         },
-        body: body ? JSON.stringify(body) : undefined,
+        body: bodyStr,
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
+      responseDetails(response.status, Date.now() - startTime);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
@@ -175,16 +184,6 @@ export class Transport {
       }
 
       throw error;
-    }
-  }
-
-  private log(message: string, data?: unknown): void {
-    if (this.config.debug) {
-      if (data !== undefined) {
-        console.log(`[Lelemon] ${message}`, data);
-      } else {
-        console.log(`[Lelemon] ${message}`);
-      }
     }
   }
 }

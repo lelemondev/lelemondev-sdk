@@ -6,6 +6,7 @@
 
 import type { LelemonConfig } from './types';
 import { Transport } from './transport';
+import { setDebug, info, warn } from './logger';
 
 // ─────────────────────────────────────────────────────────────
 // Global State
@@ -27,8 +28,22 @@ const DEFAULT_ENDPOINT = 'https://lelemon.dev';
  */
 export function init(config: LelemonConfig = {}): void {
   globalConfig = config;
+
+  // Configure debug mode
+  if (config.debug) {
+    setDebug(true);
+  }
+
+  info('Initializing SDK', {
+    endpoint: config.endpoint ?? DEFAULT_ENDPOINT,
+    debug: config.debug ?? false,
+    disabled: config.disabled ?? false,
+  });
+
   globalTransport = createTransport(config);
   initialized = true;
+
+  info('SDK initialized successfully');
 }
 
 /**
@@ -82,9 +97,7 @@ function createTransport(config: LelemonConfig): Transport {
   const apiKey = config.apiKey ?? getEnvVar('LELEMON_API_KEY');
 
   if (!apiKey && !config.disabled) {
-    console.warn(
-      '[Lelemon] No API key provided. Set apiKey in init() or LELEMON_API_KEY env var. Tracing disabled.'
-    );
+    warn('No API key provided. Set apiKey in init() or LELEMON_API_KEY env var. Tracing disabled.');
   }
 
   return new Transport({

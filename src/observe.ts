@@ -12,6 +12,7 @@ import * as openrouter from './providers/openrouter';
 import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
+import { clientWrapped, warn, debug } from './core/logger';
 
 // ─────────────────────────────────────────────────────────────
 // Observe Function
@@ -42,51 +43,39 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   // Check if disabled
   const config = getConfig();
   if (config.disabled) {
+    debug('Tracing disabled, returning unwrapped client');
     return client;
   }
 
   // Detect and wrap based on client shape
   // Note: OpenRouter must be checked BEFORE OpenAI because it uses the OpenAI SDK
   if (openrouter.canHandle(client)) {
-    if (config.debug) {
-      console.log('[Lelemon] Wrapping OpenRouter client');
-    }
+    clientWrapped('openrouter');
     return openrouter.wrap(client) as T;
   }
 
   if (openai.canHandle(client)) {
-    if (config.debug) {
-      console.log('[Lelemon] Wrapping OpenAI client');
-    }
+    clientWrapped('openai');
     return wrapOpenAI(client) as T;
   }
 
   if (anthropic.canHandle(client)) {
-    if (config.debug) {
-      console.log('[Lelemon] Wrapping Anthropic client');
-    }
+    clientWrapped('anthropic');
     return wrapAnthropic(client) as T;
   }
 
   if (bedrock.canHandle(client)) {
-    if (config.debug) {
-      console.log('[Lelemon] Wrapping Bedrock client');
-    }
+    clientWrapped('bedrock');
     return bedrock.wrap(client) as T;
   }
 
   if (gemini.canHandle(client)) {
-    if (config.debug) {
-      console.log('[Lelemon] Wrapping Gemini client');
-    }
+    clientWrapped('gemini');
     return gemini.wrap(client) as T;
   }
 
   // Unknown client type
-  console.warn(
-    '[Lelemon] Unknown client type. Tracing not enabled. ' +
-    'Supported: OpenAI, OpenRouter, Anthropic, Bedrock, Gemini'
-  );
+  warn('Unknown client type. Tracing not enabled. Supported: OpenAI, OpenRouter, Anthropic, Bedrock, Gemini');
 
   return client;
 }

@@ -7,6 +7,7 @@
 
 import type { ProviderName, CreateTraceRequest, ObserveOptions } from './types';
 import { getTransport } from './config';
+import { traceCapture, traceCaptureError, debug } from './logger';
 
 // ─────────────────────────────────────────────────────────────
 // Global context (set via observe options)
@@ -16,6 +17,7 @@ let globalContext: ObserveOptions = {};
 
 export function setGlobalContext(options: ObserveOptions): void {
   globalContext = options;
+  debug('Global context updated', options);
 }
 
 export function getGlobalContext(): ObserveOptions {
@@ -56,7 +58,10 @@ export interface CaptureErrorParams {
 export function captureTrace(params: CaptureTraceParams): void {
   try {
     const transport = getTransport();
-    if (!transport.isEnabled()) return;
+    if (!transport.isEnabled()) {
+      debug('Transport disabled, skipping trace capture');
+      return;
+    }
 
     const context = getGlobalContext();
 
@@ -76,9 +81,10 @@ export function captureTrace(params: CaptureTraceParams): void {
       tags: context.tags,
     };
 
+    traceCapture(params.provider, params.model, params.durationMs, params.status);
     transport.enqueue(request);
-  } catch {
-    // Silently ignore - observability should never crash the app
+  } catch (err) {
+    traceCaptureError(params.provider, err instanceof Error ? err : new Error(String(err)));
   }
 }
 
@@ -89,7 +95,10 @@ export function captureTrace(params: CaptureTraceParams): void {
 export function captureError(params: CaptureErrorParams): void {
   try {
     const transport = getTransport();
-    if (!transport.isEnabled()) return;
+    if (!transport.isEnabled()) {
+      debug('Transport disabled, skipping error capture');
+      return;
+    }
 
     const context = getGlobalContext();
 
@@ -111,9 +120,11 @@ export function captureError(params: CaptureErrorParams): void {
       tags: context.tags,
     };
 
+    traceCapture(params.provider, params.model, params.durationMs, 'error');
+    debug('Error details', { message: params.error.message, stack: params.error.stack });
     transport.enqueue(request);
-  } catch {
-    // Silently ignore
+  } catch (err) {
+    traceCaptureError(params.provider, err instanceof Error ? err : new Error(String(err)));
   }
 }
 

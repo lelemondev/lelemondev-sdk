@@ -1,6 +1,6 @@
 {
   "name": "@lelemondev/sdk",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Automatic LLM observability. Wrap your client, everything is traced.",
   "author": "Lelemon <info@lelemon.dev>",
   "license": "MIT",
