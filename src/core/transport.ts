@@ -132,7 +132,7 @@ export class Transport {
     this.log(`Sending batch of ${items.length} traces`);
 
     try {
-      await this.request('POST', '/api/v1/traces/batch', { traces: items });
+      await this.request('POST', '/api/v1/ingest', { events: items });
     } catch (error) {
       this.log('Batch send failed', error);
       // Don't rethrow - observability should never crash the app
