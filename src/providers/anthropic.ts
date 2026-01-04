@@ -10,7 +10,7 @@
 
 import type { ProviderName, TokenUsage } from '../core/types';
 import { safeExtract, getNestedValue, isValidNumber } from './base';
-import { captureTrace, captureError } from '../core/capture';
+import { captureTrace, captureError, captureToolSpans } from '../core/capture';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -35,11 +35,20 @@ interface MessageRequest {
   [key: string]: unknown;
 }
 
+interface ContentBlock {
+  type: string;
+  text?: string;
+  // tool_use specific fields
+  id?: string;
+  name?: string;
+  input?: unknown;
+}
+
 interface MessageResponse {
   id?: string;
   type?: string;
   role?: string;
-  content?: Array<{ type: string; text?: string }>;
+  content?: ContentBlock[];
   model?: string;
   stop_reason?: string;
   usage?: {
@@ -52,8 +61,8 @@ interface StreamEvent {
   type: string;
   message?: MessageResponse;
   index?: number;
-  content_block?: { type: string; text?: string };
-  delta?: { type: string; text?: string };
+  content_block?: ContentBlock;
+  delta?: { type: string; text?: string; partial_json?: string };
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -141,7 +150,8 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
 
       // Non-streaming response
       const durationMs = Date.now() - startTime;
-      const extracted = extractMessageResponse(response as MessageResponse);
+      const messageResponse = response as MessageResponse;
+      const extracted = extractMessageResponse(messageResponse);
 
       captureTrace({
         provider: PROVIDER_NAME,
@@ -154,6 +164,12 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
         status: 'success',
         streaming: false,
       });
+
+      // Auto-detect tool_use in response and create separate tool spans
+      const toolCalls = extractToolCalls(messageResponse);
+      if (toolCalls.length > 0) {
+        captureToolSpans(toolCalls, PROVIDER_NAME);
+      }
 
       return response;
     } catch (error) {
@@ -235,6 +251,10 @@ function wrapAnthropicStream(
   let model = request.model || 'unknown';
   let captured = false;
 
+  // Track tool_use blocks during streaming
+  const toolCalls: Array<{ id: string; name: string; input: unknown; inputJson: string }> = [];
+  let currentToolIndex: number | null = null;
+
   const wrappedIterator = async function* () {
     try {
       for await (const event of originalStream as AsyncIterable<StreamEvent>) {
@@ -248,6 +268,41 @@ function wrapAnthropicStream(
 
         if (event.type === 'content_block_delta' && event.delta?.text) {
           chunks.push(event.delta.text);
+        }
+
+        // Detect tool_use content block start
+        if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+          const block = event.content_block;
+          if (block.id && block.name) {
+            currentToolIndex = event.index ?? toolCalls.length;
+            toolCalls.push({
+              id: block.id,
+              name: block.name,
+              input: block.input ?? {},
+              inputJson: '',
+            });
+          }
+        }
+
+        // Accumulate tool input JSON during streaming
+        if (event.type === 'content_block_delta' && event.delta?.partial_json && currentToolIndex !== null) {
+          const tool = toolCalls.find((_, i) => i === currentToolIndex);
+          if (tool) {
+            tool.inputJson += event.delta.partial_json;
+          }
+        }
+
+        // Parse accumulated JSON when content block stops
+        if (event.type === 'content_block_stop' && currentToolIndex !== null) {
+          const tool = toolCalls[currentToolIndex];
+          if (tool && tool.inputJson) {
+            try {
+              tool.input = JSON.parse(tool.inputJson);
+            } catch {
+              // Keep existing input if JSON parse fails
+            }
+          }
+          currentToolIndex = null;
         }
 
         if (event.type === 'message_delta' && event.usage) {
@@ -288,6 +343,14 @@ function wrapAnthropicStream(
           status: 'success',
           streaming: true,
         });
+
+        // Capture tool spans detected during streaming
+        if (toolCalls.length > 0) {
+          captureToolSpans(
+            toolCalls.map((t) => ({ id: t.id, name: t.name, input: t.input })),
+            PROVIDER_NAME
+          );
+        }
       }
     }
   };
@@ -315,6 +378,10 @@ async function* wrapStream(
   let model = request.model || 'unknown';
   let error: Error | null = null;
 
+  // Track tool_use blocks during streaming
+  const toolCalls: Array<{ id: string; name: string; input: unknown; inputJson: string }> = [];
+  let currentToolIndex: number | null = null;
+
   try {
     for await (const event of stream as AsyncIterable<StreamEvent>) {
       if (event.type === 'message_start' && event.message) {
@@ -326,6 +393,41 @@ async function* wrapStream(
 
       if (event.type === 'content_block_delta' && event.delta?.text) {
         chunks.push(event.delta.text);
+      }
+
+      // Detect tool_use content block start
+      if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+        const block = event.content_block;
+        if (block.id && block.name) {
+          currentToolIndex = event.index ?? toolCalls.length;
+          toolCalls.push({
+            id: block.id,
+            name: block.name,
+            input: block.input ?? {},
+            inputJson: '',
+          });
+        }
+      }
+
+      // Accumulate tool input JSON during streaming
+      if (event.type === 'content_block_delta' && event.delta?.partial_json && currentToolIndex !== null) {
+        const tool = toolCalls.find((_, i) => i === currentToolIndex);
+        if (tool) {
+          tool.inputJson += event.delta.partial_json;
+        }
+      }
+
+      // Parse accumulated JSON when content block stops
+      if (event.type === 'content_block_stop' && currentToolIndex !== null) {
+        const tool = toolCalls[currentToolIndex];
+        if (tool && tool.inputJson) {
+          try {
+            tool.input = JSON.parse(tool.inputJson);
+          } catch {
+            // Keep existing input if JSON parse fails
+          }
+        }
+        currentToolIndex = null;
       }
 
       if (event.type === 'message_delta' && event.usage) {
@@ -361,6 +463,14 @@ async function* wrapStream(
         status: 'success',
         streaming: true,
       });
+
+      // Capture tool spans detected during streaming
+      if (toolCalls.length > 0) {
+        captureToolSpans(
+          toolCalls.map((t) => ({ id: t.id, name: t.name, input: t.input })),
+          PROVIDER_NAME
+        );
+      }
     }
   }
 }
@@ -411,5 +521,29 @@ function extractTokens(response: MessageResponse): TokenUsage | null {
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Extract tool_use blocks from Anthropic response
+ * Returns array of tool calls for captureToolSpans
+ */
+function extractToolCalls(response: MessageResponse): Array<{ id: string; name: string; input: unknown }> {
+  try {
+    if (!response.content || !Array.isArray(response.content)) {
+      return [];
+    }
+
+    return response.content
+      .filter((block): block is ContentBlock & { id: string; name: string } =>
+        block.type === 'tool_use' && !!block.id && !!block.name
+      )
+      .map((block) => ({
+        id: block.id,
+        name: block.name,
+        input: block.input ?? {},
+      }));
+  } catch {
+    return [];
   }
 }

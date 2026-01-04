@@ -10,7 +10,7 @@
 
 import type { ProviderName, TokenUsage } from '../core/types';
 import { safeExtract, isValidNumber } from './base';
-import { captureTrace, captureError } from '../core/capture';
+import { captureTrace, captureError, captureToolSpans } from '../core/capture';
 
 // ─────────────────────────────────────────────────────────────
 // Types (minimal, to avoid SDK dependency)
@@ -37,10 +37,21 @@ interface ConverseInput {
   requestMetadata?: Record<string, string>;
 }
 
+interface ToolUseBlock {
+  toolUseId: string;
+  name: string;
+  input: unknown;
+}
+
+interface ContentBlock {
+  text?: string;
+  toolUse?: ToolUseBlock;
+}
+
 interface ConverseResponse {
   $metadata: { httpStatusCode: number };
   output?: {
-    message?: { role: string; content: Array<{ text?: string; toolUse?: unknown }> };
+    message?: { role: string; content: ContentBlock[] };
   };
   usage?: {
     inputTokens?: number;
@@ -60,7 +71,14 @@ interface ConverseStreamResponse {
 
 interface ConverseStreamEvent {
   messageStart?: { role: string };
-  contentBlockDelta?: { contentBlockIndex: number; delta?: { text?: string } };
+  contentBlockStart?: {
+    contentBlockIndex: number;
+    start?: { toolUse?: { toolUseId: string; name: string } };
+  };
+  contentBlockDelta?: {
+    contentBlockIndex: number;
+    delta?: { text?: string; toolUse?: { input?: string } };
+  };
   contentBlockStop?: { contentBlockIndex: number };
   messageStop?: { stopReason?: string };
   metadata?: { usage?: { inputTokens?: number; outputTokens?: number } };
@@ -184,6 +202,12 @@ async function handleConverse(
       },
     });
 
+    // Auto-detect toolUse in response and create separate tool spans
+    const toolCalls = extractToolCalls(response);
+    if (toolCalls.length > 0) {
+      captureToolSpans(toolCalls, PROVIDER_NAME);
+    }
+
     return response;
   } catch (error) {
     captureError({
@@ -239,11 +263,33 @@ async function* wrapConverseStream(
   let outputTokens = 0;
   let error: Error | null = null;
 
+  // Track toolUse blocks during streaming
+  const toolCalls: Map<number, { id: string; name: string; inputJson: string }> = new Map();
+
   try {
     for await (const event of stream) {
       if (event.contentBlockDelta?.delta?.text) {
         chunks.push(event.contentBlockDelta.delta.text);
       }
+
+      // Detect toolUse content block start
+      if (event.contentBlockStart?.start?.toolUse) {
+        const tool = event.contentBlockStart.start.toolUse;
+        toolCalls.set(event.contentBlockStart.contentBlockIndex, {
+          id: tool.toolUseId,
+          name: tool.name,
+          inputJson: '',
+        });
+      }
+
+      // Accumulate tool input JSON during streaming
+      if (event.contentBlockDelta?.delta?.toolUse?.input) {
+        const tool = toolCalls.get(event.contentBlockDelta.contentBlockIndex);
+        if (tool) {
+          tool.inputJson += event.contentBlockDelta.delta.toolUse.input;
+        }
+      }
+
       if (event.metadata?.usage) {
         inputTokens = event.metadata.usage.inputTokens || 0;
         outputTokens = event.metadata.usage.outputTokens || 0;
@@ -277,6 +323,22 @@ async function* wrapConverseStream(
         status: 'success',
         streaming: true,
       });
+
+      // Capture tool spans detected during streaming
+      if (toolCalls.size > 0) {
+        const tools = Array.from(toolCalls.values()).map((t) => {
+          let parsedInput: unknown = {};
+          try {
+            if (t.inputJson) {
+              parsedInput = JSON.parse(t.inputJson);
+            }
+          } catch {
+            // Keep empty object if JSON parse fails
+          }
+          return { id: t.id, name: t.name, input: parsedInput };
+        });
+        captureToolSpans(tools, PROVIDER_NAME);
+      }
     }
   }
 }
@@ -442,6 +504,31 @@ function extractConverseOutput(response: ConverseResponse): {
     cacheWriteTokens: isValidNumber(usage.cacheWriteInputTokens) ? usage.cacheWriteInputTokens! : 0,
     hasToolUse,
   };
+}
+
+/**
+ * Extract toolUse blocks from Bedrock Converse response
+ * Returns array of tool calls for captureToolSpans
+ */
+function extractToolCalls(response: ConverseResponse): Array<{ id: string; name: string; input: unknown }> {
+  try {
+    const content = response.output?.message?.content;
+    if (!content || !Array.isArray(content)) {
+      return [];
+    }
+
+    return content
+      .filter((block): block is ContentBlock & { toolUse: ToolUseBlock } =>
+        !!block.toolUse && !!block.toolUse.toolUseId && !!block.toolUse.name
+      )
+      .map((block) => ({
+        id: block.toolUse.toolUseId,
+        name: block.toolUse.name,
+        input: block.toolUse.input ?? {},
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function parseInvokeModelBody(body: Uint8Array): {

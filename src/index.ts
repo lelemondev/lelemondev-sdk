@@ -32,6 +32,9 @@ export { init, flush, isEnabled } from './core/config';
 // Observe (primary API)
 export { observe, createObserve } from './observe';
 
+// Manual span capture
+export { captureSpan } from './core/capture';
+
 // ─────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────
@@ -40,5 +43,7 @@ export type {
   LelemonConfig,
   ObserveOptions,
   ProviderName,
+  SpanType,
+  CaptureSpanOptions,
 } from './core/types';
 

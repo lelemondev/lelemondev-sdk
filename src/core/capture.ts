@@ -5,7 +5,7 @@
  * Called by providers to record LLM calls.
  */
 
-import type { ProviderName, CreateTraceRequest, ObserveOptions } from './types';
+import type { ProviderName, CreateTraceRequest, ObserveOptions, CaptureSpanOptions, SpanType } from './types';
 import { getTransport } from './config';
 import { traceCapture, traceCaptureError, debug } from './logger';
 
@@ -125,6 +125,117 @@ export function captureError(params: CaptureErrorParams): void {
     transport.enqueue(request);
   } catch (err) {
     traceCaptureError(params.provider, err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Manual Span Capture
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Manually capture a span (tool call, retrieval, custom)
+ * Use this when auto-detection doesn't cover your use case
+ *
+ * @example
+ * // Capture a tool call
+ * captureSpan({
+ *   type: 'tool',
+ *   name: 'get_weather',
+ *   input: { location: 'San Francisco' },
+ *   output: { temperature: 72, conditions: 'sunny' },
+ *   durationMs: 150,
+ * });
+ *
+ * @example
+ * // Capture a retrieval/RAG operation
+ * captureSpan({
+ *   type: 'retrieval',
+ *   name: 'vector_search',
+ *   input: { query: 'user question', k: 5 },
+ *   output: { documents: [...] },
+ *   durationMs: 50,
+ * });
+ */
+export function captureSpan(options: CaptureSpanOptions): void {
+  try {
+    const transport = getTransport();
+    if (!transport.isEnabled()) {
+      debug('Transport disabled, skipping span capture');
+      return;
+    }
+
+    const context = getGlobalContext();
+
+    const request: CreateTraceRequest = {
+      spanType: options.type,
+      name: options.name,
+      provider: 'unknown', // Manual spans don't have a provider
+      model: options.name, // Use name as model for compatibility
+      input: sanitizeInput(options.input),
+      output: sanitizeOutput(options.output),
+      inputTokens: 0,
+      outputTokens: 0,
+      durationMs: options.durationMs,
+      status: options.status || 'success',
+      errorMessage: options.errorMessage,
+      streaming: false,
+      sessionId: context.sessionId,
+      userId: context.userId,
+      toolCallId: options.toolCallId,
+      metadata: { ...context.metadata, ...options.metadata },
+      tags: context.tags,
+    };
+
+    debug(`Span captured: ${options.type}/${options.name}`, { durationMs: options.durationMs });
+    transport.enqueue(request);
+  } catch (err) {
+    traceCaptureError('unknown', err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+/**
+ * Capture multiple tool spans from an LLM response
+ * Called internally by providers when tool_use is detected
+ */
+export function captureToolSpans(
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    input: unknown;
+  }>,
+  provider: ProviderName
+): void {
+  for (const tool of toolCalls) {
+    try {
+      const transport = getTransport();
+      if (!transport.isEnabled()) continue;
+
+      const context = getGlobalContext();
+
+      const request: CreateTraceRequest = {
+        spanType: 'tool',
+        name: tool.name,
+        provider,
+        model: tool.name,
+        input: sanitizeInput(tool.input),
+        output: null, // Tool result will come later
+        inputTokens: 0,
+        outputTokens: 0,
+        durationMs: 0, // Duration unknown at this point
+        status: 'success',
+        streaming: false,
+        sessionId: context.sessionId,
+        userId: context.userId,
+        toolCallId: tool.id,
+        metadata: { ...context.metadata, toolUseDetected: true },
+        tags: context.tags,
+      };
+
+      debug(`Tool span captured: ${tool.name}`, { toolCallId: tool.id });
+      transport.enqueue(request);
+    } catch (err) {
+      traceCaptureError(provider, err instanceof Error ? err : new Error(String(err)));
+    }
   }
 }
 

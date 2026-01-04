@@ -86,7 +86,17 @@ export interface ObserveOptions {
 // API Request/Response (for transport)
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// Span Types
+// ─────────────────────────────────────────────────────────────
+
+export type SpanType = 'llm' | 'tool' | 'retrieval' | 'custom';
+
 export interface CreateTraceRequest {
+  /** Span type (default: 'llm') */
+  spanType?: SpanType;
+  /** Span name (for tool: tool name, for LLM: model name) */
+  name?: string;
   provider: ProviderName;
   model: string;
   input: unknown;
@@ -100,6 +110,35 @@ export interface CreateTraceRequest {
   streaming: boolean;
   sessionId?: string;
   userId?: string;
+  /** Parent span ID for nested spans */
+  parentSpanId?: string;
+  /** Tool call ID (Anthropic/OpenAI tool_use id) */
+  toolCallId?: string;
   metadata?: Record<string, unknown>;
   tags?: string[];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Manual Span Capture
+// ─────────────────────────────────────────────────────────────
+
+export interface CaptureSpanOptions {
+  /** Span type */
+  type: SpanType;
+  /** Span name (tool name, retrieval source, custom name) */
+  name: string;
+  /** Input data */
+  input: unknown;
+  /** Output data */
+  output: unknown;
+  /** Duration in milliseconds */
+  durationMs: number;
+  /** Status */
+  status?: 'success' | 'error';
+  /** Error message if status is 'error' */
+  errorMessage?: string;
+  /** Tool call ID (for linking tool results) */
+  toolCallId?: string;
+  /** Custom metadata */
+  metadata?: Record<string, unknown>;
 }
