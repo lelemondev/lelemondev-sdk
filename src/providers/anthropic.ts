@@ -42,6 +42,8 @@ interface ContentBlock {
   id?: string;
   name?: string;
   input?: unknown;
+  // thinking block (extended thinking)
+  thinking?: string;
 }
 
 interface MessageResponse {
@@ -51,9 +53,20 @@ interface MessageResponse {
   content?: ContentBlock[];
   model?: string;
   stop_reason?: string;
+  stop_sequence?: string | null;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
+    // Cache tokens (prompt caching)
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    // Ephemeral cache breakdown
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    };
+    // Service info
+    service_tier?: 'standard' | 'priority' | 'batch';
   };
 }
 
@@ -163,6 +176,11 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
         durationMs,
         status: 'success',
         streaming: false,
+        // Extended fields
+        stopReason: extracted.stopReason || undefined,
+        cacheReadTokens: extracted.tokens?.cacheReadTokens,
+        cacheWriteTokens: extracted.tokens?.cacheWriteTokens,
+        thinking: extracted.thinking || undefined,
       });
 
       // Auto-detect tool_use in response and create separate tool spans
@@ -246,14 +264,21 @@ function wrapAnthropicStream(
   }
 
   const chunks: string[] = [];
+  const thinkingChunks: string[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheReadTokens: number | undefined;
+  let cacheWriteTokens: number | undefined;
+  let stopReason: string | undefined;
   let model = request.model || 'unknown';
   let captured = false;
+  let firstTokenMs: number | undefined;
+  let firstTokenReceived = false;
 
   // Track tool_use blocks during streaming
   const toolCalls: Array<{ id: string; name: string; input: unknown; inputJson: string }> = [];
   let currentToolIndex: number | null = null;
+  let currentBlockType: string | null = null;
 
   const wrappedIterator = async function* () {
     try {
@@ -263,11 +288,29 @@ function wrapAnthropicStream(
           model = event.message.model || model;
           if (event.message.usage) {
             inputTokens = event.message.usage.input_tokens || 0;
+            cacheReadTokens = event.message.usage.cache_read_input_tokens;
+            cacheWriteTokens = event.message.usage.cache_creation_input_tokens;
           }
         }
 
+        // Track content block types for thinking vs text
+        if (event.type === 'content_block_start' && event.content_block) {
+          currentBlockType = event.content_block.type;
+        }
+
         if (event.type === 'content_block_delta' && event.delta?.text) {
-          chunks.push(event.delta.text);
+          // Measure time to first text token
+          if (!firstTokenReceived) {
+            firstTokenReceived = true;
+            firstTokenMs = Date.now() - startTime;
+          }
+
+          // Route to thinking or text chunks based on current block type
+          if (currentBlockType === 'thinking') {
+            thinkingChunks.push(event.delta.text);
+          } else {
+            chunks.push(event.delta.text);
+          }
         }
 
         // Detect tool_use content block start
@@ -293,20 +336,31 @@ function wrapAnthropicStream(
         }
 
         // Parse accumulated JSON when content block stops
-        if (event.type === 'content_block_stop' && currentToolIndex !== null) {
-          const tool = toolCalls[currentToolIndex];
-          if (tool && tool.inputJson) {
-            try {
-              tool.input = JSON.parse(tool.inputJson);
-            } catch {
-              // Keep existing input if JSON parse fails
+        if (event.type === 'content_block_stop') {
+          if (currentToolIndex !== null) {
+            const tool = toolCalls[currentToolIndex];
+            if (tool && tool.inputJson) {
+              try {
+                tool.input = JSON.parse(tool.inputJson);
+              } catch {
+                // Keep existing input if JSON parse fails
+              }
             }
+            currentToolIndex = null;
           }
-          currentToolIndex = null;
+          currentBlockType = null;
         }
 
-        if (event.type === 'message_delta' && event.usage) {
-          outputTokens = event.usage.output_tokens || 0;
+        // Extract stop_reason and final tokens from message_delta
+        if (event.type === 'message_delta') {
+          if (event.usage) {
+            outputTokens = event.usage.output_tokens || 0;
+          }
+          // message_delta also contains stop_reason
+          const delta = event as unknown as { delta?: { stop_reason?: string } };
+          if (delta.delta?.stop_reason) {
+            stopReason = delta.delta.stop_reason;
+          }
         }
 
         yield event;
@@ -342,6 +396,12 @@ function wrapAnthropicStream(
           durationMs,
           status: 'success',
           streaming: true,
+          // Extended fields
+          stopReason,
+          cacheReadTokens,
+          cacheWriteTokens,
+          firstTokenMs,
+          thinking: thinkingChunks.length > 0 ? thinkingChunks.join('') : undefined,
         });
 
         // Capture tool spans detected during streaming
@@ -373,14 +433,21 @@ async function* wrapStream(
   startTime: number
 ): AsyncIterable<unknown> {
   const chunks: string[] = [];
+  const thinkingChunks: string[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheReadTokens: number | undefined;
+  let cacheWriteTokens: number | undefined;
+  let stopReason: string | undefined;
   let model = request.model || 'unknown';
   let error: Error | null = null;
+  let firstTokenMs: number | undefined;
+  let firstTokenReceived = false;
 
   // Track tool_use blocks during streaming
   const toolCalls: Array<{ id: string; name: string; input: unknown; inputJson: string }> = [];
   let currentToolIndex: number | null = null;
+  let currentBlockType: string | null = null;
 
   try {
     for await (const event of stream as AsyncIterable<StreamEvent>) {
@@ -388,11 +455,29 @@ async function* wrapStream(
         model = event.message.model || model;
         if (event.message.usage) {
           inputTokens = event.message.usage.input_tokens || 0;
+          cacheReadTokens = event.message.usage.cache_read_input_tokens;
+          cacheWriteTokens = event.message.usage.cache_creation_input_tokens;
         }
       }
 
+      // Track content block types for thinking vs text
+      if (event.type === 'content_block_start' && event.content_block) {
+        currentBlockType = event.content_block.type;
+      }
+
       if (event.type === 'content_block_delta' && event.delta?.text) {
-        chunks.push(event.delta.text);
+        // Measure time to first text token
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          firstTokenMs = Date.now() - startTime;
+        }
+
+        // Route to thinking or text chunks based on current block type
+        if (currentBlockType === 'thinking') {
+          thinkingChunks.push(event.delta.text);
+        } else {
+          chunks.push(event.delta.text);
+        }
       }
 
       // Detect tool_use content block start
@@ -418,20 +503,31 @@ async function* wrapStream(
       }
 
       // Parse accumulated JSON when content block stops
-      if (event.type === 'content_block_stop' && currentToolIndex !== null) {
-        const tool = toolCalls[currentToolIndex];
-        if (tool && tool.inputJson) {
-          try {
-            tool.input = JSON.parse(tool.inputJson);
-          } catch {
-            // Keep existing input if JSON parse fails
+      if (event.type === 'content_block_stop') {
+        if (currentToolIndex !== null) {
+          const tool = toolCalls[currentToolIndex];
+          if (tool && tool.inputJson) {
+            try {
+              tool.input = JSON.parse(tool.inputJson);
+            } catch {
+              // Keep existing input if JSON parse fails
+            }
           }
+          currentToolIndex = null;
         }
-        currentToolIndex = null;
+        currentBlockType = null;
       }
 
-      if (event.type === 'message_delta' && event.usage) {
-        outputTokens = event.usage.output_tokens || 0;
+      // Extract stop_reason and final tokens from message_delta
+      if (event.type === 'message_delta') {
+        if (event.usage) {
+          outputTokens = event.usage.output_tokens || 0;
+        }
+        // message_delta also contains stop_reason
+        const delta = event as unknown as { delta?: { stop_reason?: string } };
+        if (delta.delta?.stop_reason) {
+          stopReason = delta.delta.stop_reason;
+        }
       }
 
       yield event;
@@ -462,6 +558,12 @@ async function* wrapStream(
         durationMs,
         status: 'success',
         streaming: true,
+        // Extended fields
+        stopReason,
+        cacheReadTokens,
+        cacheWriteTokens,
+        firstTokenMs,
+        thinking: thinkingChunks.length > 0 ? thinkingChunks.join('') : undefined,
       });
 
       // Capture tool spans detected during streaming
@@ -479,12 +581,17 @@ async function* wrapStream(
 // Extraction Helpers
 // ─────────────────────────────────────────────────────────────
 
-function extractMessageResponse(response: MessageResponse): {
+interface ExtractedResponse {
   model: string | null;
   output: string | null;
   tokens: TokenUsage | null;
-} {
+  stopReason: string | null;
+  thinking: string | null;
+}
+
+function extractMessageResponse(response: MessageResponse): ExtractedResponse {
   const model = safeExtract(() => response.model ?? null, null);
+  const stopReason = safeExtract(() => response.stop_reason ?? null, null);
 
   // Extract text from content blocks
   const output = safeExtract(() => {
@@ -497,9 +604,20 @@ function extractMessageResponse(response: MessageResponse): {
     return textBlocks.join('') || null;
   }, null);
 
+  // Extract thinking blocks (extended thinking)
+  const thinking = safeExtract(() => {
+    if (!response.content || !Array.isArray(response.content)) return null;
+
+    const thinkingBlocks = response.content
+      .filter((block) => block.type === 'thinking' && block.thinking)
+      .map((block) => block.thinking);
+
+    return thinkingBlocks.join('\n\n') || null;
+  }, null);
+
   const tokens = extractTokens(response);
 
-  return { model, output, tokens };
+  return { model, output, tokens, stopReason, thinking };
 }
 
 function extractTokens(response: MessageResponse): TokenUsage | null {
@@ -518,6 +636,9 @@ function extractTokens(response: MessageResponse): TokenUsage | null {
       inputTokens: isValidNumber(inputTokens) ? inputTokens : 0,
       outputTokens: isValidNumber(outputTokens) ? outputTokens : 0,
       totalTokens: (isValidNumber(inputTokens) ? inputTokens : 0) + (isValidNumber(outputTokens) ? outputTokens : 0),
+      // Cache tokens (Anthropic prompt caching)
+      cacheReadTokens: isValidNumber(usage.cache_read_input_tokens) ? usage.cache_read_input_tokens : undefined,
+      cacheWriteTokens: isValidNumber(usage.cache_creation_input_tokens) ? usage.cache_creation_input_tokens : undefined,
     };
   } catch {
     return null;

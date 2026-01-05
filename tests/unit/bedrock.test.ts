@@ -21,16 +21,19 @@ import {
 // Mock capture module
 const mockCaptureTrace = vi.fn();
 const mockCaptureError = vi.fn();
+const mockCaptureToolSpans = vi.fn();
 
 vi.mock('../../src/core/capture', () => ({
   captureTrace: (params: unknown) => mockCaptureTrace(params),
   captureError: (params: unknown) => mockCaptureError(params),
+  captureToolSpans: (toolCalls: unknown, provider: unknown) => mockCaptureToolSpans(toolCalls, provider),
 }));
 
 describe('Bedrock Provider', () => {
   beforeEach(() => {
     mockCaptureTrace.mockClear();
     mockCaptureError.mockClear();
+    mockCaptureToolSpans.mockClear();
   });
 
   describe('canHandle', () => {
@@ -332,6 +335,79 @@ describe('Bedrock Provider', () => {
 
       expect(mockCaptureTrace).not.toHaveBeenCalled();
       expect(mockCaptureError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('extended fields (Phase 7.1)', () => {
+    it('should include stopReason in captureTrace', async () => {
+      const mockSend = vi.fn().mockResolvedValue(
+        createConverseResponse({ stopReason: 'end_turn' })
+      );
+      const client = createMockBedrockClient(mockSend);
+      const wrapped = bedrock.wrap(client) as typeof client;
+
+      const command = createConverseCommand({
+        modelId: 'anthropic.claude-3-haiku-20240307-v1:0',
+        messages: [],
+      });
+
+      await wrapped.send(command);
+
+      expect(mockCaptureTrace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stopReason: 'end_turn',
+        })
+      );
+    });
+
+    it('should include cache tokens in captureTrace', async () => {
+      const mockSend = vi.fn().mockResolvedValue(
+        createConverseResponse({
+          cacheReadInputTokens: 100,
+          cacheWriteInputTokens: 50,
+        })
+      );
+      const client = createMockBedrockClient(mockSend);
+      const wrapped = bedrock.wrap(client) as typeof client;
+
+      const command = createConverseCommand({
+        modelId: 'anthropic.claude-3-haiku-20240307-v1:0',
+        messages: [],
+      });
+
+      await wrapped.send(command);
+
+      expect(mockCaptureTrace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cacheReadTokens: 100,
+          cacheWriteTokens: 50,
+        })
+      );
+    });
+
+    it('should capture tool_use stopReason', async () => {
+      const { createConverseToolUseResponse } = await import('../fixtures/bedrock');
+      const mockSend = vi.fn().mockResolvedValue(createConverseToolUseResponse());
+      const client = createMockBedrockClient(mockSend);
+      const wrapped = bedrock.wrap(client) as typeof client;
+
+      const command = createConverseCommand({
+        modelId: 'anthropic.claude-3-haiku-20240307-v1:0',
+        messages: [],
+      });
+
+      await wrapped.send(command);
+
+      expect(mockCaptureToolSpans).toHaveBeenCalledOnce();
+      expect(mockCaptureToolSpans).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'tool-123',
+            name: 'search',
+          }),
+        ]),
+        'bedrock'
+      );
     });
   });
 });

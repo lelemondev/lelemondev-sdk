@@ -2,24 +2,42 @@
  * Lelemon SDK
  * Automatic LLM observability
  *
- * @example
+ * @example Simple usage
+ * ```typescript
  * import { init, observe, flush } from '@lelemondev/sdk';
  * import OpenAI from 'openai';
  *
- * // Initialize once
  * init({ apiKey: process.env.LELEMON_API_KEY });
- *
- * // Wrap your client - all calls are traced automatically
  * const openai = observe(new OpenAI());
  *
- * // Use normally - no code changes needed
  * const response = await openai.chat.completions.create({
  *   model: 'gpt-4',
  *   messages: [{ role: 'user', content: 'Hello!' }],
  * });
  *
- * // For serverless: flush before response
+ * await flush(); // For serverless
+ * ```
+ *
+ * @example With trace hierarchy (agents, RAG)
+ * ```typescript
+ * import { init, observe, trace, span, flush } from '@lelemondev/sdk';
+ * import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+ *
+ * init({ apiKey: process.env.LELEMON_API_KEY });
+ * const client = observe(new BedrockRuntimeClient());
+ *
+ * // Group multiple LLM calls under a single trace
+ * await trace('sales-agent', async () => {
+ *   // LLM calls are automatically captured as child spans
+ *   await client.send(new ConverseCommand({ modelId: 'anthropic.claude-3-haiku', ... }));
+ *   await client.send(new ConverseCommand({ modelId: 'anthropic.claude-3-sonnet', ... }));
+ *
+ *   // Manual spans for non-LLM operations
+ *   span({ type: 'retrieval', name: 'pinecone', output: { count: 5 } });
+ * });
+ *
  * await flush();
+ * ```
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -32,7 +50,10 @@ export { init, flush, isEnabled } from './core/config';
 // Observe (primary API)
 export { observe, createObserve } from './observe';
 
-// Manual span capture
+// Trace hierarchy (Phase 7.2)
+export { trace, span } from './core/context';
+
+// Manual span capture (lower-level API)
 export { captureSpan } from './core/capture';
 
 // ─────────────────────────────────────────────────────────────
@@ -46,4 +67,6 @@ export type {
   SpanType,
   CaptureSpanOptions,
 } from './core/types';
+
+export type { TraceOptions, SpanOptions } from './core/context';
 

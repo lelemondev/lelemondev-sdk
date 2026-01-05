@@ -18,10 +18,10 @@ export default defineConfig({
   splitting: false,
   target: 'es2020',
   outDir: 'dist',
-  // Compatible with Node.js, Bun, Deno, browsers
+  // Compatible with Node.js, Bun, Deno
   platform: 'neutral',
-  // No external dependencies - zero deps
-  noExternal: [],
+  // Mark Node.js built-ins as external (resolved by runtime)
+  external: ['async_hooks'],
   // Shims for compatibility
   shims: true,
   // Banner for ESM

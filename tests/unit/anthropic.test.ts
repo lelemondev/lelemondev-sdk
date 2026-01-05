@@ -18,16 +18,19 @@ vi.mock('../../src/core/config', () => ({
 // Mock capture module
 const mockCaptureTrace = vi.fn();
 const mockCaptureError = vi.fn();
+const mockCaptureToolSpans = vi.fn();
 
 vi.mock('../../src/core/capture', () => ({
   captureTrace: (params: unknown) => mockCaptureTrace(params),
   captureError: (params: unknown) => mockCaptureError(params),
+  captureToolSpans: (toolCalls: unknown, provider: unknown) => mockCaptureToolSpans(toolCalls, provider),
 }));
 
 describe('Anthropic Provider', () => {
   beforeEach(() => {
     mockCaptureTrace.mockClear();
     mockCaptureError.mockClear();
+    mockCaptureToolSpans.mockClear();
   });
 
   describe('PROVIDER_NAME', () => {

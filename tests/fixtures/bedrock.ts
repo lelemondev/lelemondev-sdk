@@ -5,12 +5,16 @@ export function createConverseResponse(overrides?: Partial<{
   inputTokens: number;
   outputTokens: number;
   stopReason: string;
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
 }>) {
   const defaults = {
     text: 'Hello! How can I help you today?',
     inputTokens: 10,
     outputTokens: 15,
     stopReason: 'end_turn',
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
   };
   const opts = { ...defaults, ...overrides };
 
@@ -26,6 +30,8 @@ export function createConverseResponse(overrides?: Partial<{
       inputTokens: opts.inputTokens,
       outputTokens: opts.outputTokens,
       totalTokens: opts.inputTokens + opts.outputTokens,
+      cacheReadInputTokens: opts.cacheReadInputTokens,
+      cacheWriteInputTokens: opts.cacheWriteInputTokens,
     },
     stopReason: opts.stopReason,
   };

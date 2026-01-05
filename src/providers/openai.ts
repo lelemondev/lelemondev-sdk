@@ -244,6 +244,9 @@ export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unkno
         durationMs,
         status: 'success',
         streaming: false,
+        // Extended fields
+        stopReason: extracted.finishReason || undefined,
+        reasoningTokens: extracted.tokens?.reasoningTokens,
       });
 
       return response;
@@ -409,18 +412,34 @@ async function* wrapStream(
 ): AsyncIterable<unknown> {
   const chunks: string[] = [];
   let tokens: TokenUsage | null = null;
+  let finishReason: string | undefined;
   let error: Error | null = null;
+  let firstTokenMs: number | undefined;
+  let firstTokenReceived = false;
 
   try {
     for await (const chunk of stream) {
+      const streamChunk = chunk as StreamChunk;
+
       // Extract content from chunk
-      const content = extractStreamChunkContent(chunk as StreamChunk);
+      const content = extractStreamChunkContent(streamChunk);
       if (content) {
+        // Measure time to first token
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          firstTokenMs = Date.now() - startTime;
+        }
         chunks.push(content);
       }
 
+      // Extract finish_reason if available
+      const chunkFinishReason = streamChunk?.choices?.[0]?.finish_reason;
+      if (chunkFinishReason) {
+        finishReason = chunkFinishReason;
+      }
+
       // Extract tokens if available (usually in last chunk)
-      const chunkTokens = extractStreamChunkTokens(chunk as StreamChunk);
+      const chunkTokens = extractStreamChunkTokens(streamChunk);
       if (chunkTokens) {
         tokens = chunkTokens;
       }
@@ -454,6 +473,10 @@ async function* wrapStream(
         durationMs,
         status: 'success',
         streaming: true,
+        // Extended fields
+        stopReason: finishReason,
+        reasoningTokens: tokens?.reasoningTokens,
+        firstTokenMs,
       });
     }
   }
@@ -463,19 +486,26 @@ async function* wrapStream(
 // Extraction Helpers
 // ─────────────────────────────────────────────────────────────
 
-function extractChatCompletion(response: unknown): {
+interface ExtractedChatCompletion {
   model: string | null;
   output: unknown;
   tokens: TokenUsage | null;
-} {
+  finishReason: string | null;
+}
+
+function extractChatCompletion(response: unknown): ExtractedChatCompletion {
   const model = safeExtract(() => getNestedValue(response, 'model') as string, null);
   const output = safeExtract(
     () => getNestedValue(response, 'choices.0.message.content') as string,
     null
   );
+  const finishReason = safeExtract(
+    () => getNestedValue(response, 'choices.0.finish_reason') as string,
+    null
+  );
   const tokens = extractTokens(response);
 
-  return { model, output, tokens };
+  return { model, output, tokens, finishReason };
 }
 
 function extractLegacyCompletion(response: unknown): {
@@ -507,10 +537,18 @@ function extractTokens(response: unknown): TokenUsage | null {
       return null;
     }
 
+    // Extract reasoning_tokens from completion_tokens_details (o1/o3 models)
+    let reasoningTokens: number | undefined;
+    const completionDetails = u.completion_tokens_details as Record<string, unknown> | undefined;
+    if (completionDetails && isValidNumber(completionDetails.reasoning_tokens)) {
+      reasoningTokens = completionDetails.reasoning_tokens as number;
+    }
+
     return {
       inputTokens: isValidNumber(promptTokens) ? promptTokens : 0,
       outputTokens: isValidNumber(completionTokens) ? completionTokens : 0,
       totalTokens: isValidNumber(totalTokens) ? totalTokens : 0,
+      reasoningTokens,
     };
   } catch {
     return null;

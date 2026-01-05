@@ -134,6 +134,8 @@ ${providers.map(p => `- **${capitalize(p.name)}**: ${p.methods.join(', ') || 'Al
 
 - **observe()**: Wraps LLM clients (${providerList}) with automatic tracing
 - **init()**: Initialize SDK with API key and configuration
+- **trace()**: Group multiple LLM calls under a single trace (for agents, RAG)
+- **span()**: Manually capture non-LLM operations (retrieval, embedding, tool calls)
 - **flush()**: Manually flush pending traces (required in serverless)
 - **Framework integrations**: Auto-flush middleware for Next.js, Express, Lambda, Hono
 
@@ -342,6 +344,60 @@ Manually flush all pending traces. Required in serverless environments without f
 Check if tracing is enabled.
 
 **Returns:** boolean
+
+### trace(nameOrOptions, fn)
+
+Group multiple LLM calls under a single trace. Useful for agents, RAG pipelines, and multi-step workflows.
+
+**Parameters:**
+- \`nameOrOptions\`: String name or options object with:
+  - \`name\` (string, required): Trace name (e.g., 'sales-agent', 'rag-query')
+  - \`input\` (unknown, optional): Input data for the trace
+  - \`metadata\` (object, optional): Custom metadata
+  - \`tags\` (string[], optional): Tags for filtering
+- \`fn\`: Async function to execute within the trace context
+
+**Returns:** Promise<T> - The result of the function
+
+**Example:**
+\`\`\`typescript
+await trace('sales-agent', async () => {
+  await client.send(new ConverseCommand({...})); // Automatically a child span
+  await client.send(new ConverseCommand({...})); // Automatically a child span
+});
+\`\`\`
+
+### span(options)
+
+Manually capture a span for non-LLM operations. Must be called within a trace() block.
+
+**Parameters:**
+- \`type\`: 'retrieval' | 'embedding' | 'tool' | 'guardrail' | 'rerank' | 'custom'
+- \`name\` (string, required): Span name (e.g., 'pinecone-search')
+- \`input\` (unknown, optional): Input data
+- \`output\` (unknown, optional): Output data
+- \`durationMs\` (number, optional): Duration in milliseconds
+- \`status\` ('success' | 'error', optional): Span status
+- \`errorMessage\` (string, optional): Error message if status is 'error'
+- \`metadata\` (object, optional): Custom metadata
+
+**Returns:** void
+
+**Example:**
+\`\`\`typescript
+await trace('rag-query', async () => {
+  const t0 = Date.now();
+  const docs = await pinecone.query({ vector, topK: 5 });
+  span({
+    type: 'retrieval',
+    name: 'pinecone-search',
+    input: { topK: 5 },
+    output: { count: docs.length },
+    durationMs: Date.now() - t0,
+  });
+  return client.send(new ConverseCommand({...}));
+});
+\`\`\`
 
 ---
 

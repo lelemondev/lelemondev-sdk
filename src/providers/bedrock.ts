@@ -193,11 +193,12 @@ async function handleConverse(
       durationMs,
       status: 'success',
       streaming: false,
+      // Extended fields (Phase 7.1)
+      stopReason: response.stopReason,
+      cacheReadTokens: extracted.cacheReadTokens,
+      cacheWriteTokens: extracted.cacheWriteTokens,
       metadata: {
-        stopReason: response.stopReason,
         hasToolUse: extracted.hasToolUse,
-        cacheReadTokens: extracted.cacheReadTokens,
-        cacheWriteTokens: extracted.cacheWriteTokens,
         latencyMs: response.metrics?.latencyMs,
       },
     });
@@ -262,13 +263,21 @@ async function* wrapConverseStream(
   let inputTokens = 0;
   let outputTokens = 0;
   let error: Error | null = null;
+  let stopReason: string | undefined;
+  let firstTokenMs: number | undefined;
+  let firstContentReceived = false;
 
   // Track toolUse blocks during streaming
   const toolCalls: Map<number, { id: string; name: string; inputJson: string }> = new Map();
 
   try {
     for await (const event of stream) {
-      if (event.contentBlockDelta?.delta?.text) {
+      // Track time to first content token
+      if (event.contentBlockDelta?.delta?.text && !firstContentReceived) {
+        firstContentReceived = true;
+        firstTokenMs = Date.now() - startTime;
+        chunks.push(event.contentBlockDelta.delta.text);
+      } else if (event.contentBlockDelta?.delta?.text) {
         chunks.push(event.contentBlockDelta.delta.text);
       }
 
@@ -288,6 +297,11 @@ async function* wrapConverseStream(
         if (tool) {
           tool.inputJson += event.contentBlockDelta.delta.toolUse.input;
         }
+      }
+
+      // Capture stop reason
+      if (event.messageStop?.stopReason) {
+        stopReason = event.messageStop.stopReason;
       }
 
       if (event.metadata?.usage) {
@@ -322,6 +336,9 @@ async function* wrapConverseStream(
         durationMs,
         status: 'success',
         streaming: true,
+        // Extended fields (Phase 7.1)
+        stopReason,
+        firstTokenMs,
       });
 
       // Capture tool spans detected during streaming

@@ -8,6 +8,7 @@
 import type { ProviderName, CreateTraceRequest, ObserveOptions, CaptureSpanOptions, SpanType } from './types';
 import { getTransport } from './config';
 import { traceCapture, traceCaptureError, debug } from './logger';
+import { getTraceContext, generateId } from './context';
 
 // ─────────────────────────────────────────────────────────────
 // Global context (set via observe options)
@@ -39,6 +40,13 @@ export interface CaptureTraceParams {
   status: 'success' | 'error';
   streaming: boolean;
   metadata?: Record<string, unknown>;
+  // Extended fields (Phase 7.1)
+  stopReason?: string;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  firstTokenMs?: number;
+  thinking?: string;
 }
 
 export interface CaptureErrorParams {
@@ -63,7 +71,8 @@ export function captureTrace(params: CaptureTraceParams): void {
       return;
     }
 
-    const context = getGlobalContext();
+    const globalContext = getGlobalContext();
+    const traceContext = getTraceContext();
 
     const request: CreateTraceRequest = {
       provider: params.provider,
@@ -75,10 +84,26 @@ export function captureTrace(params: CaptureTraceParams): void {
       durationMs: params.durationMs,
       status: params.status,
       streaming: params.streaming,
-      sessionId: context.sessionId,
-      userId: context.userId,
-      metadata: { ...context.metadata, ...params.metadata },
-      tags: context.tags,
+      sessionId: globalContext.sessionId,
+      userId: globalContext.userId,
+      // Hierarchy fields (Phase 7.2) - use trace context if available
+      traceId: traceContext?.traceId,
+      spanId: generateId(),
+      parentSpanId: traceContext?.currentSpanId,
+      metadata: {
+        ...globalContext.metadata,
+        ...params.metadata,
+        // Include trace name for debugging
+        ...(traceContext ? { _traceName: traceContext.name } : {}),
+      },
+      tags: globalContext.tags,
+      // Extended fields (Phase 7.1)
+      stopReason: params.stopReason,
+      cacheReadTokens: params.cacheReadTokens,
+      cacheWriteTokens: params.cacheWriteTokens,
+      reasoningTokens: params.reasoningTokens,
+      firstTokenMs: params.firstTokenMs,
+      thinking: params.thinking,
     };
 
     traceCapture(params.provider, params.model, params.durationMs, params.status);
@@ -100,7 +125,8 @@ export function captureError(params: CaptureErrorParams): void {
       return;
     }
 
-    const context = getGlobalContext();
+    const globalContext = getGlobalContext();
+    const traceContext = getTraceContext();
 
     const request: CreateTraceRequest = {
       provider: params.provider,
@@ -114,10 +140,18 @@ export function captureError(params: CaptureErrorParams): void {
       errorMessage: params.error.message,
       errorStack: params.error.stack,
       streaming: params.streaming,
-      sessionId: context.sessionId,
-      userId: context.userId,
-      metadata: { ...context.metadata, ...params.metadata },
-      tags: context.tags,
+      sessionId: globalContext.sessionId,
+      userId: globalContext.userId,
+      // Hierarchy fields (Phase 7.2)
+      traceId: traceContext?.traceId,
+      spanId: generateId(),
+      parentSpanId: traceContext?.currentSpanId,
+      metadata: {
+        ...globalContext.metadata,
+        ...params.metadata,
+        ...(traceContext ? { _traceName: traceContext.name } : {}),
+      },
+      tags: globalContext.tags,
     };
 
     traceCapture(params.provider, params.model, params.durationMs, 'error');
@@ -164,7 +198,17 @@ export function captureSpan(options: CaptureSpanOptions): void {
       return;
     }
 
-    const context = getGlobalContext();
+    const globalContext = getGlobalContext();
+    const traceContext = getTraceContext();
+
+    // Extract trace context from metadata if passed from span() in context.ts
+    const metadataTraceId = (options.metadata as Record<string, unknown>)?._traceId as string | undefined;
+    const metadataParentSpanId = (options.metadata as Record<string, unknown>)?._parentSpanId as string | undefined;
+
+    // Clean up internal metadata keys
+    const cleanMetadata = { ...globalContext.metadata, ...options.metadata };
+    delete (cleanMetadata as Record<string, unknown>)._traceId;
+    delete (cleanMetadata as Record<string, unknown>)._parentSpanId;
 
     const request: CreateTraceRequest = {
       spanType: options.type,
@@ -179,11 +223,15 @@ export function captureSpan(options: CaptureSpanOptions): void {
       status: options.status || 'success',
       errorMessage: options.errorMessage,
       streaming: false,
-      sessionId: context.sessionId,
-      userId: context.userId,
+      sessionId: globalContext.sessionId,
+      userId: globalContext.userId,
+      // Hierarchy fields (Phase 7.2)
+      traceId: metadataTraceId ?? traceContext?.traceId,
+      spanId: generateId(),
+      parentSpanId: metadataParentSpanId ?? traceContext?.currentSpanId,
       toolCallId: options.toolCallId,
-      metadata: { ...context.metadata, ...options.metadata },
-      tags: context.tags,
+      metadata: cleanMetadata,
+      tags: globalContext.tags,
     };
 
     debug(`Span captured: ${options.type}/${options.name}`, { durationMs: options.durationMs });
@@ -210,7 +258,8 @@ export function captureToolSpans(
       const transport = getTransport();
       if (!transport.isEnabled()) continue;
 
-      const context = getGlobalContext();
+      const globalContext = getGlobalContext();
+      const traceContext = getTraceContext();
 
       const request: CreateTraceRequest = {
         spanType: 'tool',
@@ -224,11 +273,19 @@ export function captureToolSpans(
         durationMs: 0, // Duration unknown at this point
         status: 'success',
         streaming: false,
-        sessionId: context.sessionId,
-        userId: context.userId,
+        sessionId: globalContext.sessionId,
+        userId: globalContext.userId,
+        // Hierarchy fields (Phase 7.2)
+        traceId: traceContext?.traceId,
+        spanId: generateId(),
+        parentSpanId: traceContext?.currentSpanId,
         toolCallId: tool.id,
-        metadata: { ...context.metadata, toolUseDetected: true },
-        tags: context.tags,
+        metadata: {
+          ...globalContext.metadata,
+          toolUseDetected: true,
+          ...(traceContext ? { _traceName: traceContext.name } : {}),
+        },
+        tags: globalContext.tags,
       };
 
       debug(`Tool span captured: ${tool.name}`, { toolCallId: tool.id });
