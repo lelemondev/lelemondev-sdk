@@ -51,7 +51,7 @@ export { init, flush, isEnabled } from './core/config';
 export { observe, createObserve } from './observe';
 
 // Trace hierarchy (Phase 7.2)
-export { trace, span } from './core/context';
+export { trace, span, getTraceContext } from './core/context';
 
 // Manual span capture (lower-level API)
 export { captureSpan } from './core/capture';
