@@ -48,6 +48,8 @@ export { captureSpan } from './core/capture';
 
 export type {
   LelemonConfig,
+  ServiceConfig,
+  SDKTelemetry,
   ObserveOptions,
   ProviderName,
   SpanType,

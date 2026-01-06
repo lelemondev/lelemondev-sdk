@@ -151,7 +151,7 @@ async function handleConverse(
       provider: PROVIDER_NAME,
       model: input.modelId || 'unknown',
       input: { system: input.system, messages: input.messages },
-      rawResponse: response, // Server extracts everything
+      rawResponse: toPlainObject(response), // Convert AWS SDK object to plain JSON
       durationMs,
       status: 'success',
       streaming: false,
@@ -314,7 +314,7 @@ async function* wrapConverseStream(
         provider: PROVIDER_NAME,
         model: input.modelId || 'unknown',
         input: { system: input.system, messages: input.messages },
-        rawResponse: finalResponse,
+        rawResponse: toPlainObject(finalResponse),
         durationMs,
         status: 'success',
         streaming: true,
@@ -450,6 +450,20 @@ async function* wrapInvokeModelStream(
 // ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
+
+/**
+ * Convert AWS SDK response object to plain JSON object.
+ * AWS SDK v3 objects may have getters/non-enumerable properties
+ * that don't serialize properly with Object.entries().
+ */
+function toPlainObject<T>(obj: T): T {
+  try {
+    return JSON.parse(JSON.stringify(obj));
+  } catch {
+    // Fallback: return as-is if not serializable
+    return obj;
+  }
+}
 
 function extractToolUseIds(response: ConverseResponse): string[] {
   const ids: string[] = [];

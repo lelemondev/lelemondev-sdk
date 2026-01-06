@@ -6,6 +6,15 @@
 // Configuration
 // ─────────────────────────────────────────────────────────────
 
+export interface ServiceConfig {
+  /** Service name (e.g., "my-ai-chatbot") */
+  name?: string;
+  /** Service version (e.g., "1.2.3") */
+  version?: string;
+  /** Deployment environment (e.g., "production", "staging", "development") */
+  environment?: string;
+}
+
 export interface LelemonConfig {
   /** API key (or set LELEMON_API_KEY env var) */
   apiKey?: string;
@@ -21,6 +30,33 @@ export interface LelemonConfig {
   flushIntervalMs?: number;
   /** Request timeout in ms (default: 10000) */
   requestTimeoutMs?: number;
+  /** Service metadata for telemetry */
+  service?: ServiceConfig;
+}
+
+// ─────────────────────────────────────────────────────────────
+// SDK Telemetry
+// ─────────────────────────────────────────────────────────────
+
+export interface SDKTelemetry {
+  /** SDK name */
+  'telemetry.sdk.name': string;
+  /** SDK version */
+  'telemetry.sdk.version': string;
+  /** SDK language */
+  'telemetry.sdk.language': string;
+  /** Runtime name (nodejs, deno, bun, browser) */
+  'process.runtime.name'?: string;
+  /** Runtime version */
+  'process.runtime.version'?: string;
+  /** OS type (linux, darwin, windows) */
+  'os.type'?: string;
+  /** Service name */
+  'service.name'?: string;
+  /** Service version */
+  'service.version'?: string;
+  /** Deployment environment */
+  'deployment.environment'?: string;
 }
 
 // ─────────────────────────────────────────────────────────────

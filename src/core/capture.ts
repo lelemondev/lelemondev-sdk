@@ -6,7 +6,7 @@
  */
 
 import type { ProviderName, CreateTraceRequest, ObserveOptions, CaptureSpanOptions, SpanType } from './types';
-import { getTransport } from './config';
+import { getTransport, getTelemetry } from './config';
 import { traceCapture, traceCaptureError, debug } from './logger';
 import { getTraceContext, generateId } from './context';
 
@@ -76,6 +76,9 @@ export function captureTrace(params: CaptureTraceParams): string | undefined {
     const traceContext = getTraceContext();
     const spanId = generateId();
 
+    // Include SDK telemetry in metadata
+    const telemetry = getTelemetry();
+
     const request: CreateTraceRequest = {
       provider: params.provider,
       model: params.model,
@@ -95,6 +98,7 @@ export function captureTrace(params: CaptureTraceParams): string | undefined {
         ...globalContext.metadata,
         ...params.metadata,
         ...(traceContext ? { _traceName: traceContext.name } : {}),
+        ...(telemetry ? { _telemetry: telemetry } : {}),
       },
       tags: globalContext.tags,
       // Manual span fields
@@ -127,6 +131,9 @@ export function captureError(params: CaptureErrorParams): void {
     const globalContext = getGlobalContext();
     const traceContext = getTraceContext();
 
+    // Include SDK telemetry in metadata
+    const telemetry = getTelemetry();
+
     const request: CreateTraceRequest = {
       provider: params.provider,
       model: params.model,
@@ -144,6 +151,7 @@ export function captureError(params: CaptureErrorParams): void {
         ...globalContext.metadata,
         ...params.metadata,
         ...(traceContext ? { _traceName: traceContext.name } : {}),
+        ...(telemetry ? { _telemetry: telemetry } : {}),
       },
       tags: globalContext.tags,
     };
@@ -199,10 +207,17 @@ export function captureSpan(options: CaptureSpanOptions): void {
     const metadataTraceId = (options.metadata as Record<string, unknown>)?._traceId as string | undefined;
     const metadataParentSpanId = (options.metadata as Record<string, unknown>)?._parentSpanId as string | undefined;
 
-    // Clean up internal metadata keys
-    const cleanMetadata = { ...globalContext.metadata, ...options.metadata };
-    delete (cleanMetadata as Record<string, unknown>)._traceId;
-    delete (cleanMetadata as Record<string, unknown>)._parentSpanId;
+    // Include SDK telemetry in metadata
+    const telemetry = getTelemetry();
+
+    // Clean up internal metadata keys and add telemetry
+    const cleanMetadata: Record<string, unknown> = {
+      ...globalContext.metadata,
+      ...options.metadata,
+      ...(telemetry ? { _telemetry: telemetry } : {}),
+    };
+    delete cleanMetadata._traceId;
+    delete cleanMetadata._parentSpanId;
 
     const request: CreateTraceRequest = {
       spanType: options.type,
@@ -238,7 +253,38 @@ export function captureSpan(options: CaptureSpanOptions): void {
 // ─────────────────────────────────────────────────────────────
 
 const MAX_STRING_LENGTH = 100_000; // 100KB per field
-const SENSITIVE_KEYS = ['api_key', 'apikey', 'password', 'secret', 'token', 'authorization'];
+
+// Keys that should be redacted (authentication-related)
+// Note: We use specific patterns to avoid false positives with LLM token counts
+const SENSITIVE_KEYS = ['api_key', 'apikey', 'password', 'secret', 'authorization'];
+const SENSITIVE_TOKEN_PATTERNS = ['access_token', 'auth_token', 'bearer_token', 'refresh_token', 'id_token', 'session_token'];
+
+// Keys that contain "token" but are safe (LLM token counts)
+const SAFE_TOKEN_KEYS = ['inputtokens', 'outputtokens', 'totaltokens', 'prompttokens', 'completiontokens', 'cachereadtokens', 'cachewritetokens', 'cachereadinputtokens', 'cachewriteinputtokens', 'reasoningtokens'];
+
+/**
+ * Check if a key should be redacted
+ */
+function isSensitiveKey(key: string): boolean {
+  const lowerKey = key.toLowerCase();
+
+  // Check if it's a safe token key (LLM token counts)
+  if (SAFE_TOKEN_KEYS.includes(lowerKey)) {
+    return false;
+  }
+
+  // Check sensitive patterns
+  if (SENSITIVE_KEYS.some((k) => lowerKey.includes(k))) {
+    return true;
+  }
+
+  // Check specific token patterns (auth tokens)
+  if (SENSITIVE_TOKEN_PATTERNS.some((k) => lowerKey.includes(k))) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Sanitize input before sending
@@ -281,7 +327,7 @@ function sanitize(value: unknown, depth: number): unknown {
 
     for (const [key, val] of Object.entries(value)) {
       // Redact sensitive keys
-      if (SENSITIVE_KEYS.some((k) => key.toLowerCase().includes(k))) {
+      if (isSensitiveKey(key)) {
         sanitized[key] = '[REDACTED]';
       } else {
         sanitized[key] = sanitize(val, depth + 1);

@@ -4,9 +4,10 @@
  * Manages SDK configuration and transport instance.
  */
 
-import type { LelemonConfig } from './types';
+import type { LelemonConfig, SDKTelemetry } from './types';
 import { Transport } from './transport';
 import { setDebug, info, warn, debug } from './logger';
+import { buildTelemetry } from './telemetry';
 
 // ─────────────────────────────────────────────────────────────
 // Global State
@@ -14,6 +15,7 @@ import { setDebug, info, warn, debug } from './logger';
 
 let globalConfig: LelemonConfig = {};
 let globalTransport: Transport | null = null;
+let globalTelemetry: SDKTelemetry | null = null;
 let initialized = false;
 
 // ─────────────────────────────────────────────────────────────
@@ -34,10 +36,14 @@ export function init(config: LelemonConfig = {}): void {
     setDebug(true);
   }
 
+  // Build telemetry with service config
+  globalTelemetry = buildTelemetry(config.service);
+
   info('Initializing SDK', {
     endpoint: config.endpoint ?? DEFAULT_ENDPOINT,
     debug: config.debug ?? false,
     disabled: config.disabled ?? false,
+    telemetry: globalTelemetry,
   });
 
   globalTransport = createTransport(config);
@@ -56,6 +62,13 @@ export function init(config: LelemonConfig = {}): void {
  */
 export function getConfig(): LelemonConfig {
   return globalConfig;
+}
+
+/**
+ * Get SDK telemetry
+ */
+export function getTelemetry(): SDKTelemetry | null {
+  return globalTelemetry;
 }
 
 /**
