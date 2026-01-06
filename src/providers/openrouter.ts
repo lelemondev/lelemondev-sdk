@@ -12,8 +12,7 @@
  * @see https://openrouter.ai/docs
  */
 
-import type { ProviderName, TokenUsage } from '../core/types';
-import { safeExtract, getNestedValue, isValidNumber } from './base';
+import type { ProviderName } from '../core/types';
 import { captureTrace, captureError } from '../core/capture';
 
 // ─────────────────────────────────────────────────────────────
@@ -177,19 +176,16 @@ function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
 
       // Non-streaming response
       const durationMs = Date.now() - startTime;
-      const extracted = extractChatCompletion(response as ChatCompletionResponse);
+      const chatResponse = response as ChatCompletionResponse;
 
       captureTrace({
         provider: PROVIDER_NAME,
-        model: request.model || extracted.model || 'unknown',
+        model: request.model || chatResponse.model || 'unknown',
         input: request.messages,
-        output: extracted.output,
-        inputTokens: extracted.tokens?.inputTokens || 0,
-        outputTokens: extracted.tokens?.outputTokens || 0,
+        rawResponse: response,
         durationMs,
         status: 'success',
         streaming: false,
-        metadata: extracted.metadata,
       });
 
       return response;
@@ -223,30 +219,43 @@ async function* wrapStream(
   request: ChatCompletionRequest,
   startTime: number
 ): AsyncIterable<unknown> {
-  const chunks: string[] = [];
-  let tokens: TokenUsage | null = null;
-  let generationId: string | null = null;
+  // Reconstruct response object from stream
+  const finalResponse: ChatCompletionResponse = {
+    choices: [{ message: { content: '', role: 'assistant' }, finish_reason: '' }],
+    usage: { prompt_tokens: 0, completion_tokens: 0 },
+  };
   let error: Error | null = null;
+  let firstTokenMs: number | undefined;
+  let firstTokenReceived = false;
 
   try {
     for await (const chunk of stream) {
       const c = chunk as StreamChunk;
 
-      // Extract generation ID from first chunk
-      if (!generationId && c.id) {
-        generationId = c.id;
+      // Extract generation ID
+      if (!finalResponse.id && c.id) {
+        finalResponse.id = c.id;
       }
 
-      // Extract content from chunk
+      // Accumulate content
       const content = c.choices?.[0]?.delta?.content;
       if (content) {
-        chunks.push(content);
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          firstTokenMs = Date.now() - startTime;
+        }
+        finalResponse.choices![0].message!.content += content;
       }
 
-      // Extract tokens if available (usually in last chunk)
-      const chunkTokens = extractStreamChunkTokens(c);
-      if (chunkTokens) {
-        tokens = chunkTokens;
+      // Capture finish_reason
+      const finishReason = c.choices?.[0]?.finish_reason;
+      if (finishReason) {
+        finalResponse.choices![0].finish_reason = finishReason;
+      }
+
+      // Capture usage (usually in last chunk)
+      if (c.usage) {
+        finalResponse.usage = c.usage;
       }
 
       yield chunk;
@@ -256,12 +265,6 @@ async function* wrapStream(
     throw err;
   } finally {
     const durationMs = Date.now() - startTime;
-    const output = chunks.join('');
-
-    const metadata: Record<string, unknown> = {};
-    if (generationId) {
-      metadata.generationId = generationId;
-    }
 
     if (error) {
       captureError({
@@ -277,73 +280,13 @@ async function* wrapStream(
         provider: PROVIDER_NAME,
         model: request.model || 'unknown',
         input: request.messages,
-        output,
-        inputTokens: tokens?.inputTokens || 0,
-        outputTokens: tokens?.outputTokens || 0,
+        rawResponse: finalResponse,
         durationMs,
         status: 'success',
         streaming: true,
-        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+        firstTokenMs,
       });
     }
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Extraction Helpers
-// ─────────────────────────────────────────────────────────────
-
-function extractChatCompletion(response: ChatCompletionResponse): {
-  model: string | null;
-  output: unknown;
-  tokens: TokenUsage | null;
-  metadata: Record<string, unknown>;
-} {
-  const model = response.model || null;
-  const output = response.choices?.[0]?.message?.content || null;
-  const tokens = extractTokens(response);
-
-  const metadata: Record<string, unknown> = {};
-
-  // Capture generation ID for async usage lookup
-  if (response.id) {
-    metadata.generationId = response.id;
-  }
-
-  return {
-    model,
-    output,
-    tokens,
-    metadata: Object.keys(metadata).length > 0 ? metadata : {},
-  };
-}
-
-function extractTokens(response: ChatCompletionResponse): TokenUsage | null {
-  const usage = response.usage;
-  if (!usage) return null;
-
-  const promptTokens = usage.prompt_tokens;
-  const completionTokens = usage.completion_tokens;
-  const totalTokens = usage.total_tokens;
-
-  if (!isValidNumber(promptTokens) && !isValidNumber(completionTokens)) {
-    return null;
-  }
-
-  return {
-    inputTokens: isValidNumber(promptTokens) ? promptTokens : 0,
-    outputTokens: isValidNumber(completionTokens) ? completionTokens : 0,
-    totalTokens: isValidNumber(totalTokens) ? totalTokens : 0,
-  };
-}
-
-function extractStreamChunkTokens(chunk: StreamChunk): TokenUsage | null {
-  const usage = chunk.usage;
-  if (!usage) return null;
-
-  return {
-    inputTokens: isValidNumber(usage.prompt_tokens) ? usage.prompt_tokens : 0,
-    outputTokens: isValidNumber(usage.completion_tokens) ? usage.completion_tokens : 0,
-    totalTokens: 0,
-  };
-}

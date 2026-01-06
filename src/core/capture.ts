@@ -33,20 +33,20 @@ export interface CaptureTraceParams {
   provider: ProviderName;
   model: string;
   input: unknown;
-  output: unknown;
-  inputTokens: number;
-  outputTokens: number;
   durationMs: number;
   status: 'success' | 'error';
   streaming: boolean;
   metadata?: Record<string, unknown>;
-  // Extended fields (Phase 7.1)
-  stopReason?: string;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  reasoningTokens?: number;
+
+  // Raw response (server extracts tokens, output, tools, etc.)
+  rawResponse?: unknown;
+
+  // Timing
   firstTokenMs?: number;
-  thinking?: string;
+
+  // Manual span type
+  spanType?: SpanType;
+  name?: string;
 }
 
 export interface CaptureErrorParams {
@@ -80,32 +80,26 @@ export function captureTrace(params: CaptureTraceParams): string | undefined {
       provider: params.provider,
       model: params.model,
       input: sanitizeInput(params.input),
-      output: sanitizeOutput(params.output),
-      inputTokens: params.inputTokens,
-      outputTokens: params.outputTokens,
+      rawResponse: params.rawResponse ? sanitize(params.rawResponse, 0) : undefined,
       durationMs: params.durationMs,
       status: params.status,
       streaming: params.streaming,
+      firstTokenMs: params.firstTokenMs,
       sessionId: globalContext.sessionId,
       userId: globalContext.userId,
-      // Hierarchy fields (Phase 7.2) - use trace context if available
+      // Hierarchy fields
       traceId: traceContext?.traceId,
       spanId,
       parentSpanId: traceContext?.currentSpanId,
       metadata: {
         ...globalContext.metadata,
         ...params.metadata,
-        // Include trace name for debugging
         ...(traceContext ? { _traceName: traceContext.name } : {}),
       },
       tags: globalContext.tags,
-      // Extended fields (Phase 7.1)
-      stopReason: params.stopReason,
-      cacheReadTokens: params.cacheReadTokens,
-      cacheWriteTokens: params.cacheWriteTokens,
-      reasoningTokens: params.reasoningTokens,
-      firstTokenMs: params.firstTokenMs,
-      thinking: params.thinking,
+      // Manual span fields
+      spanType: params.spanType,
+      name: params.name,
     };
 
     traceCapture(params.provider, params.model, params.durationMs, params.status);
@@ -137,17 +131,12 @@ export function captureError(params: CaptureErrorParams): void {
       provider: params.provider,
       model: params.model,
       input: sanitizeInput(params.input),
-      output: null,
-      inputTokens: 0,
-      outputTokens: 0,
       durationMs: params.durationMs,
       status: 'error',
       errorMessage: params.error.message,
-      errorStack: params.error.stack,
       streaming: params.streaming,
       sessionId: globalContext.sessionId,
       userId: globalContext.userId,
-      // Hierarchy fields (Phase 7.2)
       traceId: traceContext?.traceId,
       spanId: generateId(),
       parentSpanId: traceContext?.currentSpanId,
@@ -218,19 +207,17 @@ export function captureSpan(options: CaptureSpanOptions): void {
     const request: CreateTraceRequest = {
       spanType: options.type,
       name: options.name,
-      provider: 'unknown', // Manual spans don't have a provider
-      model: options.name, // Use name as model for compatibility
+      provider: 'unknown',
+      model: options.name,
       input: sanitizeInput(options.input),
-      output: sanitizeOutput(options.output),
-      inputTokens: 0,
-      outputTokens: 0,
+      // Manual spans use output directly (not rawResponse)
+      output: sanitize(options.output, 0),
       durationMs: options.durationMs,
       status: options.status || 'success',
       errorMessage: options.errorMessage,
       streaming: false,
       sessionId: globalContext.sessionId,
       userId: globalContext.userId,
-      // Hierarchy fields (Phase 7.2)
       traceId: metadataTraceId ?? traceContext?.traceId,
       spanId: generateId(),
       parentSpanId: metadataParentSpanId ?? traceContext?.currentSpanId,
