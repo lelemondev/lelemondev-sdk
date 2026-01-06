@@ -60,19 +60,21 @@ export interface CaptureErrorParams {
 }
 
 /**
- * Capture a successful trace
+ * Capture a successful trace (LLM call)
  * Fire-and-forget - never throws
+ * @returns The span ID, for linking tool calls to this LLM span
  */
-export function captureTrace(params: CaptureTraceParams): void {
+export function captureTrace(params: CaptureTraceParams): string | undefined {
   try {
     const transport = getTransport();
     if (!transport.isEnabled()) {
       debug('Transport disabled, skipping trace capture');
-      return;
+      return undefined;
     }
 
     const globalContext = getGlobalContext();
     const traceContext = getTraceContext();
+    const spanId = generateId();
 
     const request: CreateTraceRequest = {
       provider: params.provider,
@@ -88,7 +90,7 @@ export function captureTrace(params: CaptureTraceParams): void {
       userId: globalContext.userId,
       // Hierarchy fields (Phase 7.2) - use trace context if available
       traceId: traceContext?.traceId,
-      spanId: generateId(),
+      spanId,
       parentSpanId: traceContext?.currentSpanId,
       metadata: {
         ...globalContext.metadata,
@@ -108,8 +110,11 @@ export function captureTrace(params: CaptureTraceParams): void {
 
     traceCapture(params.provider, params.model, params.durationMs, params.status);
     transport.enqueue(request);
+
+    return spanId;
   } catch (err) {
     traceCaptureError(params.provider, err instanceof Error ? err : new Error(String(err)));
+    return undefined;
   }
 }
 
@@ -238,61 +243,6 @@ export function captureSpan(options: CaptureSpanOptions): void {
     transport.enqueue(request);
   } catch (err) {
     traceCaptureError('unknown', err instanceof Error ? err : new Error(String(err)));
-  }
-}
-
-/**
- * Capture multiple tool spans from an LLM response
- * Called internally by providers when tool_use is detected
- */
-export function captureToolSpans(
-  toolCalls: Array<{
-    id: string;
-    name: string;
-    input: unknown;
-  }>,
-  provider: ProviderName
-): void {
-  for (const tool of toolCalls) {
-    try {
-      const transport = getTransport();
-      if (!transport.isEnabled()) continue;
-
-      const globalContext = getGlobalContext();
-      const traceContext = getTraceContext();
-
-      const request: CreateTraceRequest = {
-        spanType: 'tool',
-        name: tool.name,
-        provider,
-        model: tool.name,
-        input: sanitizeInput(tool.input),
-        output: null, // Tool result will come later
-        inputTokens: 0,
-        outputTokens: 0,
-        durationMs: 0, // Duration unknown at this point
-        status: 'success',
-        streaming: false,
-        sessionId: globalContext.sessionId,
-        userId: globalContext.userId,
-        // Hierarchy fields (Phase 7.2)
-        traceId: traceContext?.traceId,
-        spanId: generateId(),
-        parentSpanId: traceContext?.currentSpanId,
-        toolCallId: tool.id,
-        metadata: {
-          ...globalContext.metadata,
-          toolUseDetected: true,
-          ...(traceContext ? { _traceName: traceContext.name } : {}),
-        },
-        tags: globalContext.tags,
-      };
-
-      debug(`Tool span captured: ${tool.name}`, { toolCallId: tool.id });
-      transport.enqueue(request);
-    } catch (err) {
-      traceCaptureError(provider, err instanceof Error ? err : new Error(String(err)));
-    }
   }
 }
 

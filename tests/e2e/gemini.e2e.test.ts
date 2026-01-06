@@ -19,16 +19,16 @@ const hasGeminiKey = (): boolean => {
 
 describe.skipIf(!hasGeminiKey())('Gemini E2E Tests', () => {
   let GoogleGenerativeAI: any;
-  let observe: typeof import('../../src/observe').observe;
-  let init: typeof import('../../src/core/config').init;
-  let flush: typeof import('../../src/core/config').flush;
+  let observe: typeof import('../../src/gemini').observe;
+  let init: typeof import('../../src/gemini').init;
+  let flush: typeof import('../../src/gemini').flush;
 
   beforeAll(async () => {
     try {
       const geminiModule = await import('@google/generative-ai');
       GoogleGenerativeAI = geminiModule.GoogleGenerativeAI;
 
-      const sdk = await import('../../src/index');
+      const sdk = await import('../../src/gemini');
       observe = sdk.observe;
       init = sdk.init;
       flush = sdk.flush;

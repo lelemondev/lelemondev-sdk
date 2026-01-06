@@ -1,6 +1,6 @@
 {
   "name": "@lelemondev/sdk",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Automatic LLM observability. Wrap your client, everything is traced.",
   "author": "Lelemon <info@lelemon.dev>",
   "license": "MIT",
@@ -37,6 +37,31 @@
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
     },
+    "./openai": {
+      "types": "./dist/openai.d.ts",
+      "import": "./dist/openai.mjs",
+      "require": "./dist/openai.js"
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic.d.ts",
+      "import": "./dist/anthropic.mjs",
+      "require": "./dist/anthropic.js"
+    },
+    "./bedrock": {
+      "types": "./dist/bedrock.d.ts",
+      "import": "./dist/bedrock.mjs",
+      "require": "./dist/bedrock.js"
+    },
+    "./gemini": {
+      "types": "./dist/gemini.d.ts",
+      "import": "./dist/gemini.mjs",
+      "require": "./dist/gemini.js"
+    },
+    "./openrouter": {
+      "types": "./dist/openrouter.d.ts",
+      "import": "./dist/openrouter.mjs",
+      "require": "./dist/openrouter.js"
+    },
     "./next": {
       "types": "./dist/next.d.ts",
       "import": "./dist/next.mjs",
@@ -66,6 +91,21 @@
   },
   "typesVersions": {
     "*": {
+      "openai": [
+        "./dist/openai.d.ts"
+      ],
+      "anthropic": [
+        "./dist/anthropic.d.ts"
+      ],
+      "bedrock": [
+        "./dist/bedrock.d.ts"
+      ],
+      "gemini": [
+        "./dist/gemini.d.ts"
+      ],
+      "openrouter": [
+        "./dist/openrouter.d.ts"
+      ],
       "next": [
         "./dist/next.d.ts"
       ],

@@ -2,21 +2,28 @@
  * Trace Context Module
  *
  * Provides AsyncLocalStorage-based context for grouping spans under a parent trace.
- * This enables hierarchical tracing without modifying the simple observe() API.
+ * Supports hierarchical tracing where:
+ * - trace() creates a root "agent" span
+ * - LLM calls become children of the root
+ * - Tool calls become children of the LLM that triggered them (via toolCallId linking)
  *
  * @example
  * ```typescript
  * import { trace, span } from '@lelemondev/sdk';
  *
- * await trace('sales-agent', async () => {
- *   await client.send(new ConverseCommand({...})); // Span 1
- *   await client.send(new ConverseCommand({...})); // Span 2
- *   span({ type: 'retrieval', name: 'pinecone', output: { count: 5 } });
+ * await trace({ name: 'sales-agent', input: userMessage }, async () => {
+ *   const response = await client.send(new ConverseCommand({...}));
+ *   // Tools automatically linked to their parent LLM via toolCallId
+ *   return response;
  * });
  * ```
  */
 
 import { AsyncLocalStorage } from 'async_hooks';
+import { getTransport } from './config';
+import { getGlobalContext } from './capture';
+import { debug } from './logger';
+import type { CreateTraceRequest, SpanType } from './types';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -41,6 +48,8 @@ export interface TraceContext {
   metadata?: Record<string, unknown>;
   /** Trace tags */
   tags?: string[];
+  /** Map of toolCallId → llmSpanId for linking tool spans to their parent LLM */
+  pendingToolCalls: Map<string, string>;
 }
 
 export interface TraceOptions {
@@ -69,6 +78,8 @@ export interface SpanOptions {
   status?: 'success' | 'error';
   /** Error message if status is 'error' */
   errorMessage?: string;
+  /** Tool call ID (links this tool span to the LLM that requested it) */
+  toolCallId?: string;
   /** Custom metadata */
   metadata?: Record<string, unknown>;
 }
@@ -114,18 +125,65 @@ export function hasTraceContext(): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Tool Call Linking
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Register tool calls from an LLM response.
+ * When the LLM returns with tool_use, call this to link subsequent tool spans.
+ * @param toolCallIds - Array of tool call IDs from the LLM response
+ * @param llmSpanId - The span ID of the LLM call that requested these tools
+ */
+export function registerToolCalls(toolCallIds: string[], llmSpanId: string): void {
+  const ctx = getTraceContext();
+  if (!ctx) return;
+
+  for (const id of toolCallIds) {
+    ctx.pendingToolCalls.set(id, llmSpanId);
+    debug(`Registered tool call ${id} → LLM span ${llmSpanId}`);
+  }
+}
+
+/**
+ * Get the correct parent span ID for a tool span.
+ * If toolCallId matches a pending tool call, returns the LLM span that requested it.
+ * Otherwise falls back to the current span ID.
+ */
+export function getToolParentSpanId(toolCallId?: string): string | undefined {
+  const ctx = getTraceContext();
+  if (!ctx) return undefined;
+
+  if (toolCallId && ctx.pendingToolCalls.has(toolCallId)) {
+    return ctx.pendingToolCalls.get(toolCallId);
+  }
+
+  return ctx.currentSpanId;
+}
+
+/**
+ * Clear a tool call from the pending map after it's been processed.
+ */
+export function clearToolCall(toolCallId: string): void {
+  const ctx = getTraceContext();
+  if (ctx) {
+    ctx.pendingToolCalls.delete(toolCallId);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // trace() - Main API for grouping spans
 // ─────────────────────────────────────────────────────────────
 
 /**
  * Execute a function within a trace context.
- * All LLM calls made within this function will be grouped under the same trace.
+ * Creates a root "agent" span that contains all LLM calls and tool executions.
+ * The result of the function becomes the output of the root span.
  *
  * @example Simple usage (just name)
  * ```typescript
  * await trace('sales-agent', async () => {
  *   await client.send(new ConverseCommand({...}));
- *   await client.send(new ConverseCommand({...}));
+ *   return finalResponse;
  * });
  * ```
  *
@@ -160,17 +218,71 @@ export async function trace<T>(
     input: options.input,
     metadata: options.metadata,
     tags: options.tags,
+    pendingToolCalls: new Map(),
   };
 
   // Run the function within the trace context
   return traceStorage.run(context, async () => {
+    let result: T | undefined;
+    let error: Error | undefined;
+
     try {
-      const result = await fn();
+      result = await fn();
       return result;
+    } catch (e) {
+      error = e instanceof Error ? e : new Error(String(e));
+      throw e;
     } finally {
-      // Future: Could capture the root span here with aggregated metrics
+      // Send the root span with the final result
+      sendRootSpan(context, error ? undefined : result, error);
     }
   });
+}
+
+/**
+ * Send the root "agent" span when the trace completes.
+ * This span represents the entire agent execution with input/output.
+ */
+function sendRootSpan(context: TraceContext, result?: unknown, error?: Error): void {
+  const transport = getTransport();
+  if (!transport.isEnabled()) {
+    debug('Transport disabled, skipping root span');
+    return;
+  }
+
+  const globalContext = getGlobalContext();
+  const durationMs = Date.now() - context.startTime;
+
+  // Sanitize result if it's a string (common case for agent responses)
+  const output = error ? null : result;
+
+  const rootSpan: CreateTraceRequest = {
+    spanType: 'agent' as SpanType,
+    name: context.name,
+    provider: 'agent',
+    model: context.name,
+    traceId: context.traceId,
+    spanId: context.rootSpanId,
+    parentSpanId: context.parentSpanId,
+    input: context.input,
+    output,
+    inputTokens: 0,  // Will be aggregated from children
+    outputTokens: 0,
+    durationMs,
+    status: error ? 'error' : 'success',
+    errorMessage: error?.message,
+    streaming: false,
+    sessionId: globalContext.sessionId,
+    userId: globalContext.userId,
+    metadata: {
+      ...globalContext.metadata,
+      ...context.metadata,
+    },
+    tags: context.tags ?? globalContext.tags,
+  };
+
+  debug(`Sending root span: ${context.name}`, { durationMs, hasError: !!error });
+  transport.enqueue(rootSpan);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -181,23 +293,29 @@ export async function trace<T>(
 import { captureSpan as captureSpanImport } from './capture';
 
 /**
- * Manually capture a span for non-LLM operations (retrieval, embedding, etc.)
+ * Manually capture a span for non-LLM operations (retrieval, embedding, tool, etc.)
  * Must be called within a trace() block.
  *
- * @example
+ * @example Tool with toolCallId (links to parent LLM)
  * ```typescript
- * await trace('rag-query', async () => {
- *   const t0 = Date.now();
- *   const docs = await pinecone.query({ vector, topK: 5 });
- *   span({
- *     type: 'retrieval',
- *     name: 'pinecone-search',
- *     input: { topK: 5 },
- *     output: { count: docs.length },
- *     durationMs: Date.now() - t0,
- *   });
+ * span({
+ *   type: 'tool',
+ *   name: 'query_database',
+ *   toolCallId: 'tooluse_abc123',  // Links to LLM that requested this
+ *   input: { sql: 'SELECT ...' },
+ *   output: { rows: [...] },
+ *   durationMs: 15,
+ * });
+ * ```
  *
- *   return client.send(new ConverseCommand({...}));
+ * @example Retrieval without toolCallId
+ * ```typescript
+ * span({
+ *   type: 'retrieval',
+ *   name: 'pinecone-search',
+ *   input: { topK: 5 },
+ *   output: { count: 10 },
+ *   durationMs: 50,
  * });
  * ```
  */
@@ -212,6 +330,9 @@ export function span(options: SpanOptions): void {
     return;
   }
 
+  // Determine parent: if toolCallId provided and registered, use the LLM span
+  const parentSpanId = getToolParentSpanId(options.toolCallId);
+
   captureSpanImport({
     type: options.type,
     name: options.name,
@@ -220,13 +341,18 @@ export function span(options: SpanOptions): void {
     durationMs: options.durationMs ?? 0,
     status: options.status ?? 'success',
     errorMessage: options.errorMessage,
+    toolCallId: options.toolCallId,
     metadata: {
       ...options.metadata,
-      // Include trace context
       _traceId: context.traceId,
-      _parentSpanId: context.currentSpanId,
+      _parentSpanId: parentSpanId,
     },
   });
+
+  // Clear the tool call after processing
+  if (options.toolCallId) {
+    clearToolCall(options.toolCallId);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

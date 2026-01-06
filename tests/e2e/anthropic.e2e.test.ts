@@ -19,16 +19,16 @@ const hasAnthropicKey = (): boolean => {
 
 describe.skipIf(!hasAnthropicKey())('Anthropic E2E Tests', () => {
   let Anthropic: any;
-  let observe: typeof import('../../src/observe').observe;
-  let init: typeof import('../../src/core/config').init;
-  let flush: typeof import('../../src/core/config').flush;
+  let observe: typeof import('../../src/anthropic').observe;
+  let init: typeof import('../../src/anthropic').init;
+  let flush: typeof import('../../src/anthropic').flush;
 
   beforeAll(async () => {
     try {
       const anthropicModule = await import('@anthropic-ai/sdk');
       Anthropic = anthropicModule.default;
 
-      const sdk = await import('../../src/index');
+      const sdk = await import('../../src/anthropic');
       observe = sdk.observe;
       init = sdk.init;
       flush = sdk.flush;

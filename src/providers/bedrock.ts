@@ -10,7 +10,8 @@
 
 import type { ProviderName, TokenUsage } from '../core/types';
 import { safeExtract, isValidNumber } from './base';
-import { captureTrace, captureError, captureToolSpans } from '../core/capture';
+import { captureTrace, captureError } from '../core/capture';
+import { registerToolCalls } from '../core/context';
 
 // ─────────────────────────────────────────────────────────────
 // Types (minimal, to avoid SDK dependency)
@@ -183,7 +184,7 @@ async function handleConverse(
     const durationMs = Date.now() - startTime;
     const extracted = extractConverseOutput(response);
 
-    captureTrace({
+    const spanId = captureTrace({
       provider: PROVIDER_NAME,
       model: input.modelId || 'unknown',
       input: { system: input.system, messages: input.messages },
@@ -203,10 +204,9 @@ async function handleConverse(
       },
     });
 
-    // Auto-detect toolUse in response and create separate tool spans
-    const toolCalls = extractToolCalls(response);
-    if (toolCalls.length > 0) {
-      captureToolSpans(toolCalls, PROVIDER_NAME);
+    // Register tool calls for hierarchy linking
+    if (spanId && extracted.toolUseIds.length > 0) {
+      registerToolCalls(extracted.toolUseIds, spanId);
     }
 
     return response;
@@ -326,7 +326,7 @@ async function* wrapConverseStream(
         streaming: true,
       });
     } else {
-      captureTrace({
+      const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: input.modelId || 'unknown',
         input: { system: input.system, messages: input.messages },
@@ -341,20 +341,10 @@ async function* wrapConverseStream(
         firstTokenMs,
       });
 
-      // Capture tool spans detected during streaming
-      if (toolCalls.size > 0) {
-        const tools = Array.from(toolCalls.values()).map((t) => {
-          let parsedInput: unknown = {};
-          try {
-            if (t.inputJson) {
-              parsedInput = JSON.parse(t.inputJson);
-            }
-          } catch {
-            // Keep empty object if JSON parse fails
-          }
-          return { id: t.id, name: t.name, input: parsedInput };
-        });
-        captureToolSpans(tools, PROVIDER_NAME);
+      // Register tool calls for hierarchy linking
+      if (spanId && toolCalls.size > 0) {
+        const toolUseIds = Array.from(toolCalls.values()).map(t => t.id);
+        registerToolCalls(toolUseIds, spanId);
       }
     }
   }
@@ -497,9 +487,20 @@ function extractConverseOutput(response: ConverseResponse): {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   hasToolUse: boolean;
+  toolUseIds: string[];
 } {
   const content = response.output?.message?.content;
   const hasToolUse = Array.isArray(content) && content.some((c) => c.toolUse);
+
+  // Extract tool use IDs for hierarchy linking
+  const toolUseIds: string[] = [];
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block.toolUse?.toolUseId) {
+        toolUseIds.push(block.toolUse.toolUseId);
+      }
+    }
+  }
 
   const output = safeExtract(() => {
     if (!Array.isArray(content)) return null;
@@ -520,33 +521,10 @@ function extractConverseOutput(response: ConverseResponse): {
     cacheReadTokens: isValidNumber(usage.cacheReadInputTokens) ? usage.cacheReadInputTokens! : 0,
     cacheWriteTokens: isValidNumber(usage.cacheWriteInputTokens) ? usage.cacheWriteInputTokens! : 0,
     hasToolUse,
+    toolUseIds,
   };
 }
 
-/**
- * Extract toolUse blocks from Bedrock Converse response
- * Returns array of tool calls for captureToolSpans
- */
-function extractToolCalls(response: ConverseResponse): Array<{ id: string; name: string; input: unknown }> {
-  try {
-    const content = response.output?.message?.content;
-    if (!content || !Array.isArray(content)) {
-      return [];
-    }
-
-    return content
-      .filter((block): block is ContentBlock & { toolUse: ToolUseBlock } =>
-        !!block.toolUse && !!block.toolUse.toolUseId && !!block.toolUse.name
-      )
-      .map((block) => ({
-        id: block.toolUse.toolUseId,
-        name: block.toolUse.name,
-        input: block.toolUse.input ?? {},
-      }));
-  } catch {
-    return [];
-  }
-}
 
 function parseInvokeModelBody(body: Uint8Array): {
   output: unknown;

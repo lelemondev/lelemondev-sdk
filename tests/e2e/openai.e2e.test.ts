@@ -19,16 +19,16 @@ const hasOpenAIKey = (): boolean => {
 
 describe.skipIf(!hasOpenAIKey())('OpenAI E2E Tests', () => {
   let OpenAI: any;
-  let observe: typeof import('../../src/observe').observe;
-  let init: typeof import('../../src/core/config').init;
-  let flush: typeof import('../../src/core/config').flush;
+  let observe: typeof import('../../src/openai').observe;
+  let init: typeof import('../../src/openai').init;
+  let flush: typeof import('../../src/openai').flush;
 
   beforeAll(async () => {
     try {
       const openaiModule = await import('openai');
       OpenAI = openaiModule.default;
 
-      const sdk = await import('../../src/index');
+      const sdk = await import('../../src/openai');
       observe = sdk.observe;
       init = sdk.init;
       flush = sdk.flush;

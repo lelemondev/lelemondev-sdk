@@ -10,7 +10,8 @@
 
 import type { ProviderName, TokenUsage } from '../core/types';
 import { safeExtract, getNestedValue, isValidNumber } from './base';
-import { captureTrace, captureError, captureToolSpans } from '../core/capture';
+import { captureTrace, captureError } from '../core/capture';
+import { registerToolCalls } from '../core/context';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -166,7 +167,7 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
       const messageResponse = response as MessageResponse;
       const extracted = extractMessageResponse(messageResponse);
 
-      captureTrace({
+      const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: request.model || extracted.model || 'unknown',
         input: { system: request.system, messages: request.messages },
@@ -183,10 +184,9 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
         thinking: extracted.thinking || undefined,
       });
 
-      // Auto-detect tool_use in response and create separate tool spans
-      const toolCalls = extractToolCalls(messageResponse);
-      if (toolCalls.length > 0) {
-        captureToolSpans(toolCalls, PROVIDER_NAME);
+      // Register tool calls for hierarchy linking
+      if (spanId && extracted.toolUseIds.length > 0) {
+        registerToolCalls(extracted.toolUseIds, spanId);
       }
 
       return response;
@@ -386,7 +386,7 @@ function wrapAnthropicStream(
         captured = true;
         const durationMs = Date.now() - startTime;
 
-        captureTrace({
+        const spanId = captureTrace({
           provider: PROVIDER_NAME,
           model,
           input: { system: request.system, messages: request.messages },
@@ -404,12 +404,10 @@ function wrapAnthropicStream(
           thinking: thinkingChunks.length > 0 ? thinkingChunks.join('') : undefined,
         });
 
-        // Capture tool spans detected during streaming
-        if (toolCalls.length > 0) {
-          captureToolSpans(
-            toolCalls.map((t) => ({ id: t.id, name: t.name, input: t.input })),
-            PROVIDER_NAME
-          );
+        // Register tool calls for hierarchy linking
+        if (spanId && toolCalls.length > 0) {
+          const toolUseIds = toolCalls.map(t => t.id);
+          registerToolCalls(toolUseIds, spanId);
         }
       }
     }
@@ -548,7 +546,7 @@ async function* wrapStream(
         streaming: true,
       });
     } else {
-      captureTrace({
+      const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model,
         input: { system: request.system, messages: request.messages },
@@ -566,12 +564,10 @@ async function* wrapStream(
         thinking: thinkingChunks.length > 0 ? thinkingChunks.join('') : undefined,
       });
 
-      // Capture tool spans detected during streaming
-      if (toolCalls.length > 0) {
-        captureToolSpans(
-          toolCalls.map((t) => ({ id: t.id, name: t.name, input: t.input })),
-          PROVIDER_NAME
-        );
+      // Register tool calls for hierarchy linking
+      if (spanId && toolCalls.length > 0) {
+        const toolUseIds = toolCalls.map(t => t.id);
+        registerToolCalls(toolUseIds, spanId);
       }
     }
   }
@@ -587,6 +583,7 @@ interface ExtractedResponse {
   tokens: TokenUsage | null;
   stopReason: string | null;
   thinking: string | null;
+  toolUseIds: string[];
 }
 
 function extractMessageResponse(response: MessageResponse): ExtractedResponse {
@@ -615,9 +612,19 @@ function extractMessageResponse(response: MessageResponse): ExtractedResponse {
     return thinkingBlocks.join('\n\n') || null;
   }, null);
 
+  // Extract tool use IDs for hierarchy linking
+  const toolUseIds: string[] = [];
+  if (response.content && Array.isArray(response.content)) {
+    for (const block of response.content) {
+      if (block.type === 'tool_use' && block.id) {
+        toolUseIds.push(block.id);
+      }
+    }
+  }
+
   const tokens = extractTokens(response);
 
-  return { model, output, tokens, stopReason, thinking };
+  return { model, output, tokens, stopReason, thinking, toolUseIds };
 }
 
 function extractTokens(response: MessageResponse): TokenUsage | null {
@@ -645,26 +652,3 @@ function extractTokens(response: MessageResponse): TokenUsage | null {
   }
 }
 
-/**
- * Extract tool_use blocks from Anthropic response
- * Returns array of tool calls for captureToolSpans
- */
-function extractToolCalls(response: MessageResponse): Array<{ id: string; name: string; input: unknown }> {
-  try {
-    if (!response.content || !Array.isArray(response.content)) {
-      return [];
-    }
-
-    return response.content
-      .filter((block): block is ContentBlock & { id: string; name: string } =>
-        block.type === 'tool_use' && !!block.id && !!block.name
-      )
-      .map((block) => ({
-        id: block.id,
-        name: block.name,
-        input: block.input ?? {},
-      }));
-  } catch {
-    return [];
-  }
-}

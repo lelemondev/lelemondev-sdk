@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://lelemon.dev/docs
+    about: Check our documentation for guides and API reference
+  - name: Discord Community
+    url: https://discord.gg/lelemon
+    about: Ask questions and chat with the community

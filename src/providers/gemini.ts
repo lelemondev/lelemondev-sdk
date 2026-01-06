@@ -14,6 +14,7 @@
 import type { ProviderName, TokenUsage } from '../core/types';
 import { safeExtract, isValidNumber } from './base';
 import { captureTrace, captureError } from '../core/capture';
+import { registerToolCalls } from '../core/context';
 
 // ─────────────────────────────────────────────────────────────
 // Types (minimal, to avoid SDK dependency)
@@ -61,6 +62,7 @@ interface Content {
 interface Part {
   text?: string;
   inlineData?: { mimeType: string; data: string };
+  functionCall?: { name: string; args: unknown };
   [key: string]: unknown;
 }
 
@@ -216,7 +218,7 @@ function wrapGenerateContent(
       const durationMs = Date.now() - startTime;
       const extracted = extractGenerateContentResult(result);
 
-      captureTrace({
+      const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: modelName,
         input,
@@ -228,6 +230,12 @@ function wrapGenerateContent(
         streaming: false,
         metadata: extracted.metadata,
       });
+
+      // Register function calls for hierarchy linking
+      // Gemini uses function names as IDs since there's no explicit ID
+      if (spanId && extracted.functionCallIds.length > 0) {
+        registerToolCalls(extracted.functionCallIds, spanId);
+      }
 
       return result;
     } catch (error) {
@@ -399,7 +407,7 @@ function wrapSendMessage(
       const durationMs = Date.now() - startTime;
       const extracted = extractGenerateContentResult(result);
 
-      captureTrace({
+      const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: modelName,
         input,
@@ -411,6 +419,11 @@ function wrapSendMessage(
         streaming: false,
         metadata: extracted.metadata,
       });
+
+      // Register function calls for hierarchy linking
+      if (spanId && extracted.functionCallIds.length > 0) {
+        registerToolCalls(extracted.functionCallIds, spanId);
+      }
 
       return result;
     } catch (error) {
@@ -481,6 +494,7 @@ function extractGenerateContentResult(result: GenerateContentResult): {
   inputTokens: number;
   outputTokens: number;
   metadata: Record<string, unknown>;
+  functionCallIds: string[];
 } {
   const response = result.response;
 
@@ -504,6 +518,19 @@ function extractGenerateContentResult(result: GenerateContentResult): {
   const inputTokens = isValidNumber(usage?.promptTokenCount) ? usage!.promptTokenCount! : 0;
   const outputTokens = isValidNumber(usage?.candidatesTokenCount) ? usage!.candidatesTokenCount! : 0;
 
+  // Extract function call IDs for hierarchy linking
+  // Gemini doesn't have explicit IDs, so we generate one from the function name + index
+  const functionCallIds: string[] = [];
+  const parts = response.candidates?.[0]?.content?.parts;
+  if (parts) {
+    parts.forEach((part, index) => {
+      if (part.functionCall?.name) {
+        // Generate a deterministic ID from function name and index
+        functionCallIds.push(`gemini-fc-${part.functionCall.name}-${index}`);
+      }
+    });
+  }
+
   // Build metadata
   const metadata: Record<string, unknown> = {};
 
@@ -525,5 +552,6 @@ function extractGenerateContentResult(result: GenerateContentResult): {
     inputTokens,
     outputTokens,
     metadata: Object.keys(metadata).length > 0 ? metadata : {},
+    functionCallIds,
   };
 }

@@ -2,7 +2,15 @@ import { defineConfig } from 'tsup';
 
 export default defineConfig({
   entry: {
+    // Core (no providers)
     index: 'src/index.ts',
+    // Provider-specific (lightweight)
+    openai: 'src/openai.ts',
+    anthropic: 'src/anthropic.ts',
+    bedrock: 'src/bedrock.ts',
+    gemini: 'src/gemini.ts',
+    openrouter: 'src/openrouter.ts',
+    // Framework integrations
     next: 'src/integrations/next.ts',
     lambda: 'src/integrations/lambda.ts',
     express: 'src/integrations/express.ts',
@@ -13,7 +21,7 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  minify: false,
+  minify: true,
   treeshake: true,
   splitting: false,
   target: 'es2020',

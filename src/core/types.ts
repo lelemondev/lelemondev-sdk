@@ -27,7 +27,7 @@ export interface LelemonConfig {
 // Provider Detection
 // ─────────────────────────────────────────────────────────────
 
-export type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'bedrock' | 'openrouter' | 'unknown';
+export type ProviderName = 'openai' | 'anthropic' | 'gemini' | 'bedrock' | 'openrouter' | 'agent' | 'unknown';
 
 export interface ProviderInfo {
   name: ProviderName;
@@ -96,7 +96,7 @@ export interface ObserveOptions {
 // Span Types
 // ─────────────────────────────────────────────────────────────
 
-export type SpanType = 'llm' | 'tool' | 'retrieval' | 'embedding' | 'guardrail' | 'rerank' | 'custom';
+export type SpanType = 'llm' | 'agent' | 'tool' | 'retrieval' | 'embedding' | 'guardrail' | 'rerank' | 'custom';
 
 export interface CreateTraceRequest {
   /** Span type (default: 'llm') */

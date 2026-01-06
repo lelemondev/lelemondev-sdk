@@ -47,9 +47,9 @@ describe.skipIf(!hasAWSCredentials())('Bedrock E2E Tests', () => {
   let BedrockRuntimeClient: unknown;
   let ConverseCommand: unknown;
   let ConverseStreamCommand: unknown;
-  let observe: typeof import('../../src/observe').observe;
-  let init: typeof import('../../src/core/config').init;
-  let flush: typeof import('../../src/core/config').flush;
+  let observe: typeof import('../../src/bedrock').observe;
+  let init: typeof import('../../src/bedrock').init;
+  let flush: typeof import('../../src/bedrock').flush;
 
   beforeAll(async () => {
     // Dynamic imports to avoid errors when SDK not installed
@@ -59,7 +59,7 @@ describe.skipIf(!hasAWSCredentials())('Bedrock E2E Tests', () => {
       ConverseCommand = bedrockModule.ConverseCommand;
       ConverseStreamCommand = bedrockModule.ConverseStreamCommand;
 
-      const sdk = await import('../../src/index');
+      const sdk = await import('../../src/bedrock');
       observe = sdk.observe;
       init = sdk.init;
       flush = sdk.flush;

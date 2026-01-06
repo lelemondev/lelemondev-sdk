@@ -13,6 +13,7 @@
 import type { ProviderName, TokenUsage } from '../core/types';
 import { safeExtract, getNestedValue, isValidNumber } from './base';
 import { captureTrace, captureError } from '../core/capture';
+import { registerToolCalls } from '../core/context';
 
 // ─────────────────────────────────────────────────────────────
 // Types (minimal, to avoid SDK dependency)
@@ -47,6 +48,14 @@ interface StreamChunk {
     delta?: {
       content?: string;
       role?: string;
+      tool_calls?: Array<{
+        index: number;
+        id?: string;
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      }>;
     };
     finish_reason?: string;
   }>;
@@ -234,7 +243,7 @@ export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unkno
       const durationMs = Date.now() - startTime;
       const extracted = extractChatCompletion(response);
 
-      captureTrace({
+      const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: request.model || extracted.model || 'unknown',
         input: request.messages,
@@ -248,6 +257,11 @@ export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unkno
         stopReason: extracted.finishReason || undefined,
         reasoningTokens: extracted.tokens?.reasoningTokens,
       });
+
+      // Register tool calls for hierarchy linking
+      if (spanId && extracted.toolCallIds.length > 0) {
+        registerToolCalls(extracted.toolCallIds, spanId);
+      }
 
       return response;
     } catch (error) {
@@ -417,6 +431,9 @@ async function* wrapStream(
   let firstTokenMs: number | undefined;
   let firstTokenReceived = false;
 
+  // Track tool calls during streaming
+  const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
+
   try {
     for await (const chunk of stream) {
       const streamChunk = chunk as StreamChunk;
@@ -430,6 +447,20 @@ async function* wrapStream(
           firstTokenMs = Date.now() - startTime;
         }
         chunks.push(content);
+      }
+
+      // Track tool calls from streaming delta
+      const deltaToolCalls = streamChunk?.choices?.[0]?.delta?.tool_calls;
+      if (deltaToolCalls) {
+        for (const tc of deltaToolCalls) {
+          if (!toolCalls.has(tc.index)) {
+            toolCalls.set(tc.index, { id: '', name: '', arguments: '' });
+          }
+          const existing = toolCalls.get(tc.index)!;
+          if (tc.id) existing.id = tc.id;
+          if (tc.function?.name) existing.name = tc.function.name;
+          if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+        }
       }
 
       // Extract finish_reason if available
@@ -463,7 +494,7 @@ async function* wrapStream(
         streaming: true,
       });
     } else {
-      captureTrace({
+      const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: request.model || 'unknown',
         input: request.messages,
@@ -478,6 +509,16 @@ async function* wrapStream(
         reasoningTokens: tokens?.reasoningTokens,
         firstTokenMs,
       });
+
+      // Register tool calls for hierarchy linking
+      if (spanId && toolCalls.size > 0) {
+        const toolCallIds = Array.from(toolCalls.values())
+          .map(tc => tc.id)
+          .filter(id => id !== '');
+        if (toolCallIds.length > 0) {
+          registerToolCalls(toolCallIds, spanId);
+        }
+      }
     }
   }
 }
@@ -491,6 +532,7 @@ interface ExtractedChatCompletion {
   output: unknown;
   tokens: TokenUsage | null;
   finishReason: string | null;
+  toolCallIds: string[];
 }
 
 function extractChatCompletion(response: unknown): ExtractedChatCompletion {
@@ -505,7 +547,21 @@ function extractChatCompletion(response: unknown): ExtractedChatCompletion {
   );
   const tokens = extractTokens(response);
 
-  return { model, output, tokens, finishReason };
+  // Extract tool call IDs for hierarchy linking
+  const toolCallIds: string[] = [];
+  const toolCalls = safeExtract(
+    () => getNestedValue(response, 'choices.0.message.tool_calls') as Array<{ id: string }>,
+    null
+  );
+  if (Array.isArray(toolCalls)) {
+    for (const tc of toolCalls) {
+      if (tc.id) {
+        toolCallIds.push(tc.id);
+      }
+    }
+  }
+
+  return { model, output, tokens, finishReason, toolCallIds };
 }
 
 function extractLegacyCompletion(response: unknown): {

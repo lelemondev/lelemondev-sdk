@@ -1,0 +1,85 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the information below.
+
+  - type: input
+    id: version
+    attributes:
+      label: SDK Version
+      description: What version of @lelemondev/sdk are you using?
+      placeholder: "0.7.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      description: Which LLM provider are you using?
+      options:
+        - OpenAI
+        - Anthropic
+        - AWS Bedrock
+        - Google Gemini
+        - OpenRouter
+        - Multiple / Not applicable
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime Environment
+      options:
+        - Node.js
+        - Next.js
+        - AWS Lambda
+        - Vercel
+        - Cloudflare Workers
+        - Bun
+        - Deno
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of what the bug is
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal code example to reproduce the issue
+      placeholder: |
+        ```typescript
+        import { init, observe } from '@lelemondev/sdk/openai';
+        // ...
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+    validations:
+      required: true

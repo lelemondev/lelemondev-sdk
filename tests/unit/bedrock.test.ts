@@ -19,21 +19,27 @@ import {
 } from '../fixtures/bedrock';
 
 // Mock capture module
-const mockCaptureTrace = vi.fn();
+const mockCaptureTrace = vi.fn().mockReturnValue('span-123');
 const mockCaptureError = vi.fn();
-const mockCaptureToolSpans = vi.fn();
 
 vi.mock('../../src/core/capture', () => ({
   captureTrace: (params: unknown) => mockCaptureTrace(params),
   captureError: (params: unknown) => mockCaptureError(params),
-  captureToolSpans: (toolCalls: unknown, provider: unknown) => mockCaptureToolSpans(toolCalls, provider),
+}));
+
+// Mock context module for registerToolCalls
+const mockRegisterToolCalls = vi.fn();
+
+vi.mock('../../src/core/context', () => ({
+  registerToolCalls: (toolCallIds: string[], spanId: string) => mockRegisterToolCalls(toolCallIds, spanId),
+  getTraceContext: () => undefined,
 }));
 
 describe('Bedrock Provider', () => {
   beforeEach(() => {
-    mockCaptureTrace.mockClear();
+    mockCaptureTrace.mockClear().mockReturnValue('span-123');
     mockCaptureError.mockClear();
-    mockCaptureToolSpans.mockClear();
+    mockRegisterToolCalls.mockClear();
   });
 
   describe('canHandle', () => {
@@ -385,7 +391,7 @@ describe('Bedrock Provider', () => {
       );
     });
 
-    it('should capture tool_use stopReason', async () => {
+    it('should register tool calls when stopReason is tool_use', async () => {
       const { createConverseToolUseResponse } = await import('../fixtures/bedrock');
       const mockSend = vi.fn().mockResolvedValue(createConverseToolUseResponse());
       const client = createMockBedrockClient(mockSend);
@@ -398,15 +404,11 @@ describe('Bedrock Provider', () => {
 
       await wrapped.send(command);
 
-      expect(mockCaptureToolSpans).toHaveBeenCalledOnce();
-      expect(mockCaptureToolSpans).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: 'tool-123',
-            name: 'search',
-          }),
-        ]),
-        'bedrock'
+      // Verify registerToolCalls was called with the toolUseIds
+      expect(mockRegisterToolCalls).toHaveBeenCalledOnce();
+      expect(mockRegisterToolCalls).toHaveBeenCalledWith(
+        ['tool-123'],  // toolUseIds extracted from response
+        'span-123'     // spanId returned by captureTrace
       );
     });
   });

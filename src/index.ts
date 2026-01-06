@@ -1,56 +1,42 @@
 /**
- * Lelemon SDK
- * Automatic LLM observability
+ * Lelemon SDK - Core
  *
- * @example Simple usage
+ * This is the core module. For observing LLM clients, use provider-specific imports:
+ *
+ * @example OpenAI
  * ```typescript
- * import { init, observe, flush } from '@lelemondev/sdk';
- * import OpenAI from 'openai';
- *
- * init({ apiKey: process.env.LELEMON_API_KEY });
- * const openai = observe(new OpenAI());
- *
- * const response = await openai.chat.completions.create({
- *   model: 'gpt-4',
- *   messages: [{ role: 'user', content: 'Hello!' }],
- * });
- *
- * await flush(); // For serverless
+ * import { init, observe, flush } from '@lelemondev/sdk/openai';
  * ```
  *
- * @example With trace hierarchy (agents, RAG)
+ * @example Anthropic
  * ```typescript
- * import { init, observe, trace, span, flush } from '@lelemondev/sdk';
- * import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+ * import { init, observe, flush } from '@lelemondev/sdk/anthropic';
+ * ```
  *
- * init({ apiKey: process.env.LELEMON_API_KEY });
- * const client = observe(new BedrockRuntimeClient());
+ * @example AWS Bedrock
+ * ```typescript
+ * import { init, observe, flush } from '@lelemondev/sdk/bedrock';
+ * ```
  *
- * // Group multiple LLM calls under a single trace
- * await trace('sales-agent', async () => {
- *   // LLM calls are automatically captured as child spans
- *   await client.send(new ConverseCommand({ modelId: 'anthropic.claude-3-haiku', ... }));
- *   await client.send(new ConverseCommand({ modelId: 'anthropic.claude-3-sonnet', ... }));
+ * @example Google Gemini
+ * ```typescript
+ * import { init, observe, flush } from '@lelemondev/sdk/gemini';
+ * ```
  *
- *   // Manual spans for non-LLM operations
- *   span({ type: 'retrieval', name: 'pinecone', output: { count: 5 } });
- * });
- *
- * await flush();
+ * @example OpenRouter
+ * ```typescript
+ * import { init, observe, flush } from '@lelemondev/sdk/openrouter';
  * ```
  */
 
 // ─────────────────────────────────────────────────────────────
-// Main API
+// Core API
 // ─────────────────────────────────────────────────────────────
 
 // Configuration
 export { init, flush, isEnabled } from './core/config';
 
-// Observe (primary API)
-export { observe, createObserve } from './observe';
-
-// Trace hierarchy (Phase 7.2)
+// Trace hierarchy
 export { trace, span, getTraceContext } from './core/context';
 
 // Manual span capture (lower-level API)
@@ -68,5 +54,4 @@ export type {
   CaptureSpanOptions,
 } from './core/types';
 
-export type { TraceOptions, SpanOptions } from './core/context';
-
+export type { TraceContext, TraceOptions, SpanOptions } from './core/context';
