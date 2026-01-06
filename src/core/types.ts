@@ -99,25 +99,31 @@ export interface ObserveOptions {
 export type SpanType = 'llm' | 'agent' | 'tool' | 'retrieval' | 'embedding' | 'guardrail' | 'rerank' | 'custom';
 
 export interface CreateTraceRequest {
-  /** Span type (default: 'llm') */
-  spanType?: SpanType;
-  /** Span name (for tool: tool name, for LLM: model name) */
-  name?: string;
+  // ─── Provider & Model ───
   provider: ProviderName;
   model: string;
+
+  // ─── Raw Data (server parses) ───
+  /** Input sent to the LLM */
   input: unknown;
-  output: unknown;
-  inputTokens: number;
-  outputTokens: number;
+  /** Raw LLM response - server extracts tokens, output, tools, etc. */
+  rawResponse?: unknown;
+
+  // ─── Timing (SDK must measure) ───
+  /** Total duration in milliseconds */
   durationMs: number;
+  /** Time to first token in ms (streaming only) */
+  firstTokenMs?: number;
+
+  // ─── Status ───
   status: 'success' | 'error';
+  streaming: boolean;
   errorMessage?: string;
   errorStack?: string;
-  streaming: boolean;
+
+  // ─── Context ───
   sessionId?: string;
   userId?: string;
-
-  // ─── Hierarchy fields (Phase 7.2) ───
   /** Trace ID (groups spans together) */
   traceId?: string;
   /** Unique span ID */
@@ -130,18 +136,28 @@ export interface CreateTraceRequest {
   metadata?: Record<string, unknown>;
   tags?: string[];
 
-  // ─── Extended fields (Phase 7.1) ───
-  /** Stop reason: 'end_turn', 'tool_use', 'stop', 'max_tokens', etc. */
+  // ─── Manual Spans ───
+  /** Span type (default: 'llm') */
+  spanType?: SpanType;
+  /** Span name (for tool: tool name, for LLM: model name) */
+  name?: string;
+
+  // ─── Legacy fields (used when rawResponse is not provided) ───
+  /** @deprecated Server extracts from rawResponse */
+  output?: unknown;
+  /** @deprecated Server extracts from rawResponse */
+  inputTokens?: number;
+  /** @deprecated Server extracts from rawResponse */
+  outputTokens?: number;
+  /** @deprecated Server extracts from rawResponse */
   stopReason?: string;
-  /** Anthropic: cache_read_input_tokens */
+  /** @deprecated Server extracts from rawResponse */
   cacheReadTokens?: number;
-  /** Anthropic: cache_creation_input_tokens */
+  /** @deprecated Server extracts from rawResponse */
   cacheWriteTokens?: number;
-  /** OpenAI o1/o3: reasoning_tokens */
+  /** @deprecated Server extracts from rawResponse */
   reasoningTokens?: number;
-  /** Time to first token in ms (streaming) */
-  firstTokenMs?: number;
-  /** Claude extended thinking content */
+  /** @deprecated Server extracts from rawResponse */
   thinking?: string;
 }
 

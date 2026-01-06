@@ -122,8 +122,12 @@ describe('Bedrock Provider', () => {
           model: 'anthropic.claude-3-haiku-20240307-v1:0',
           status: 'success',
           streaming: false,
-          inputTokens: 10,
-          outputTokens: 15,
+          rawResponse: expect.objectContaining({
+            usage: expect.objectContaining({
+              inputTokens: 10,
+              outputTokens: 15,
+            }),
+          }),
         })
       );
     });
@@ -150,7 +154,7 @@ describe('Bedrock Provider', () => {
       );
     });
 
-    it('should extract output from response content', async () => {
+    it('should include rawResponse with content', async () => {
       const mockSend = vi.fn().mockResolvedValue(
         createConverseResponse({ text: 'Custom response text' })
       );
@@ -166,7 +170,15 @@ describe('Bedrock Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          output: 'Custom response text',
+          rawResponse: expect.objectContaining({
+            output: expect.objectContaining({
+              message: expect.objectContaining({
+                content: expect.arrayContaining([
+                  expect.objectContaining({ text: 'Custom response text' }),
+                ]),
+              }),
+            }),
+          }),
         })
       );
     });
@@ -225,7 +237,8 @@ describe('Bedrock Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          output: expect.stringContaining('Test'),
+          rawResponse: expect.any(Object),
+          streaming: true,
         })
       );
     });
@@ -262,7 +275,7 @@ describe('Bedrock Provider', () => {
   });
 
   describe('InvokeModelCommand', () => {
-    it('should parse Claude response format', async () => {
+    it('should send rawResponse for Claude format', async () => {
       const mockSend = vi.fn().mockResolvedValue(createInvokeModelClaudeResponse());
       const client = createMockBedrockClient(mockSend);
       const wrapped = bedrock.wrap(client) as typeof client;
@@ -276,14 +289,13 @@ describe('Bedrock Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          output: 'Hello from Claude!',
-          inputTokens: 12,
-          outputTokens: 8,
+          rawResponse: expect.any(Object),
+          streaming: false,
         })
       );
     });
 
-    it('should parse Titan response format', async () => {
+    it('should send rawResponse for Titan format', async () => {
       const mockSend = vi.fn().mockResolvedValue(createInvokeModelTitanResponse());
       const client = createMockBedrockClient(mockSend);
       const wrapped = bedrock.wrap(client) as typeof client;
@@ -297,14 +309,13 @@ describe('Bedrock Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          output: 'Hello from Titan!',
-          inputTokens: 10,
-          outputTokens: 20,
+          rawResponse: expect.any(Object),
+          streaming: false,
         })
       );
     });
 
-    it('should parse Llama response format', async () => {
+    it('should send rawResponse for Llama format', async () => {
       const mockSend = vi.fn().mockResolvedValue(createInvokeModelLlamaResponse());
       const client = createMockBedrockClient(mockSend);
       const wrapped = bedrock.wrap(client) as typeof client;
@@ -318,9 +329,8 @@ describe('Bedrock Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          output: 'Hello from Llama!',
-          inputTokens: 8,
-          outputTokens: 5,
+          rawResponse: expect.any(Object),
+          streaming: false,
         })
       );
     });
@@ -344,8 +354,8 @@ describe('Bedrock Provider', () => {
     });
   });
 
-  describe('extended fields (Phase 7.1)', () => {
-    it('should include stopReason in captureTrace', async () => {
+  describe('extended fields (rawResponse)', () => {
+    it('should include stopReason in rawResponse', async () => {
       const mockSend = vi.fn().mockResolvedValue(
         createConverseResponse({ stopReason: 'end_turn' })
       );
@@ -361,12 +371,14 @@ describe('Bedrock Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          stopReason: 'end_turn',
+          rawResponse: expect.objectContaining({
+            stopReason: 'end_turn',
+          }),
         })
       );
     });
 
-    it('should include cache tokens in captureTrace', async () => {
+    it('should include cache tokens in rawResponse', async () => {
       const mockSend = vi.fn().mockResolvedValue(
         createConverseResponse({
           cacheReadInputTokens: 100,
@@ -385,8 +397,12 @@ describe('Bedrock Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          cacheReadTokens: 100,
-          cacheWriteTokens: 50,
+          rawResponse: expect.objectContaining({
+            usage: expect.objectContaining({
+              cacheReadInputTokens: 100,
+              cacheWriteInputTokens: 50,
+            }),
+          }),
         })
       );
     });

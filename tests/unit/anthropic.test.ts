@@ -95,9 +95,13 @@ describe('Anthropic Provider', () => {
         expect.objectContaining({
           provider: 'anthropic',
           model: 'claude-3-haiku-20240307',
-          output: 'Hello! How can I help you today?',
-          inputTokens: 10,
-          outputTokens: 15,
+          rawResponse: expect.objectContaining({
+            content: expect.any(Array),
+            usage: expect.objectContaining({
+              input_tokens: 10,
+              output_tokens: 15,
+            }),
+          }),
           streaming: false,
         })
       );
@@ -152,8 +156,12 @@ describe('Anthropic Provider', () => {
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: 'anthropic',
-          inputTokens: 25,
-          outputTokens: 30,
+          rawResponse: expect.objectContaining({
+            usage: expect.objectContaining({
+              input_tokens: 25,
+              output_tokens: 30,
+            }),
+          }),
         })
       );
     });
@@ -177,7 +185,11 @@ describe('Anthropic Provider', () => {
       expect(mockCaptureTrace).toHaveBeenCalledOnce();
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          output: 'Here is the analysis:\n\nThe data shows...',
+          rawResponse: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({ type: 'text' }),
+            ]),
+          }),
         })
       );
     });

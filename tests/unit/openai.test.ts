@@ -93,9 +93,19 @@ describe('OpenAI Provider', () => {
         expect.objectContaining({
           provider: 'openai',
           model: 'gpt-4o-mini',
-          output: 'Hello! How can I help you today?',
-          inputTokens: 10,
-          outputTokens: 15,
+          rawResponse: expect.objectContaining({
+            choices: expect.arrayContaining([
+              expect.objectContaining({
+                message: expect.objectContaining({
+                  content: 'Hello! How can I help you today?',
+                }),
+              }),
+            ]),
+            usage: expect.objectContaining({
+              prompt_tokens: 10,
+              completion_tokens: 15,
+            }),
+          }),
           streaming: false,
         })
       );
@@ -150,8 +160,12 @@ describe('OpenAI Provider', () => {
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: 'openai',
-          inputTokens: 20,
-          outputTokens: 25,
+          rawResponse: expect.objectContaining({
+            usage: expect.objectContaining({
+              prompt_tokens: 20,
+              completion_tokens: 25,
+            }),
+          }),
         })
       );
     });
@@ -256,9 +270,13 @@ describe('OpenAI Provider', () => {
         expect.objectContaining({
           provider: 'openai',
           model: 'gpt-4o',
-          output: 'Hello from Responses API!',
-          inputTokens: 15,
-          outputTokens: 20,
+          rawResponse: expect.objectContaining({
+            output_text: 'Hello from Responses API!',
+            usage: expect.objectContaining({
+              input_tokens: 15,
+              output_tokens: 20,
+            }),
+          }),
           streaming: false,
         })
       );
@@ -335,7 +353,13 @@ describe('OpenAI Provider', () => {
         expect.objectContaining({
           provider: 'openai',
           model: 'gpt-3.5-turbo-instruct',
-          output: 'This is a completion.',
+          rawResponse: expect.objectContaining({
+            choices: expect.arrayContaining([
+              expect.objectContaining({
+                text: 'This is a completion.',
+              }),
+            ]),
+          }),
         })
       );
     });
@@ -364,9 +388,12 @@ describe('OpenAI Provider', () => {
         expect.objectContaining({
           provider: 'openai',
           model: 'text-embedding-3-small',
-          output: '[embedding vectors]',
-          inputTokens: 8,
-          outputTokens: 0,
+          rawResponse: expect.objectContaining({
+            usage: expect.objectContaining({
+              prompt_tokens: 8,
+              total_tokens: 8,
+            }),
+          }),
         })
       );
     });

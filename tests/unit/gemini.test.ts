@@ -98,9 +98,13 @@ describe('Gemini Provider', () => {
           provider: 'gemini',
           model: 'gemini-2.5-flash',
           input: 'Hello',
-          output: 'Hello! I am Gemini.',
-          inputTokens: 10,
-          outputTokens: 15,
+          rawResponse: expect.objectContaining({
+            candidates: expect.any(Array),
+            usageMetadata: expect.objectContaining({
+              promptTokenCount: 10,
+              candidatesTokenCount: 15,
+            }),
+          }),
           status: 'success',
           streaming: false,
         })
@@ -165,13 +169,17 @@ describe('Gemini Provider', () => {
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: 'gemini',
-          inputTokens: 20,
-          outputTokens: 10,
+          rawResponse: expect.objectContaining({
+            usageMetadata: expect.objectContaining({
+              promptTokenCount: 20,
+              candidatesTokenCount: 10,
+            }),
+          }),
         })
       );
     });
 
-    it('should capture cached content tokens in metadata', async () => {
+    it('should capture cached content tokens in rawResponse', async () => {
       const mockResult = createCachedContentResult();
       const mockGenerateContent = vi.fn().mockResolvedValue(mockResult);
 
@@ -183,14 +191,16 @@ describe('Gemini Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          metadata: expect.objectContaining({
-            cachedTokens: 1000,
+          rawResponse: expect.objectContaining({
+            usageMetadata: expect.objectContaining({
+              cachedContentTokenCount: 1000,
+            }),
           }),
         })
       );
     });
 
-    it('should capture thinking tokens in metadata', async () => {
+    it('should capture thinking tokens in rawResponse', async () => {
       const mockResult = createThinkingResult();
       const mockGenerateContent = vi.fn().mockResolvedValue(mockResult);
 
@@ -202,8 +212,10 @@ describe('Gemini Provider', () => {
 
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
-          metadata: expect.objectContaining({
-            thoughtsTokens: 512,
+          rawResponse: expect.objectContaining({
+            usageMetadata: expect.objectContaining({
+              thoughtsTokenCount: 512,
+            }),
           }),
         })
       );
@@ -238,7 +250,7 @@ describe('Gemini Provider', () => {
       expect(mockCaptureTrace).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: 'gemini',
-          output: 'Hello streaming world',
+          rawResponse: expect.any(Object),
           streaming: true,
         })
       );
@@ -310,7 +322,7 @@ describe('Gemini Provider', () => {
         expect.objectContaining({
           provider: 'gemini',
           input: 'Hello',
-          output: 'Chat response',
+          rawResponse: expect.any(Object),
           streaming: false,
         })
       );

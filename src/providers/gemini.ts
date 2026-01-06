@@ -1,42 +1,25 @@
 /**
  * Google Gemini Provider Wrapper
  *
- * Wraps @google/generative-ai to automatically capture:
- * - model.generateContent()
- * - model.generateContentStream()
- * - chat.sendMessage()
- * - chat.sendMessageStream()
- *
- * Supports both GoogleGenerativeAI (@google/generative-ai)
- * and GoogleGenAI (@google/genai) clients.
+ * Wraps @google/generative-ai to automatically capture LLM calls.
+ * SDK thin: only captures timing and raw response.
+ * Server smart: extracts tokens, output, tools, etc.
  */
 
-import type { ProviderName, TokenUsage } from '../core/types';
-import { safeExtract, isValidNumber } from './base';
+import type { ProviderName } from '../core/types';
 import { captureTrace, captureError } from '../core/capture';
 import { registerToolCalls } from '../core/context';
 
 // ─────────────────────────────────────────────────────────────
-// Types (minimal, to avoid SDK dependency)
+// Types
 // ─────────────────────────────────────────────────────────────
 
 interface GeminiClient {
   getGenerativeModel: (config: ModelConfig) => GenerativeModel;
-  apiKey?: string;
 }
 
 interface ModelConfig {
   model: string;
-  systemInstruction?: string;
-  generationConfig?: GenerationConfig;
-  [key: string]: unknown;
-}
-
-interface GenerationConfig {
-  temperature?: number;
-  maxOutputTokens?: number;
-  responseMimeType?: string;
-  responseSchema?: unknown;
   [key: string]: unknown;
 }
 
@@ -49,8 +32,6 @@ interface GenerativeModel {
 
 interface GenerateContentRequest {
   contents?: Content[];
-  systemInstruction?: string | Content;
-  generationConfig?: GenerationConfig;
   [key: string]: unknown;
 }
 
@@ -61,7 +42,6 @@ interface Content {
 
 interface Part {
   text?: string;
-  inlineData?: { mimeType: string; data: string };
   functionCall?: { name: string; args: unknown };
   [key: string]: unknown;
 }
@@ -95,22 +75,17 @@ interface Candidate {
 interface UsageMetadata {
   promptTokenCount?: number;
   candidatesTokenCount?: number;
-  totalTokenCount?: number;
   cachedContentTokenCount?: number;
   thoughtsTokenCount?: number;
 }
 
 interface ChatConfig {
-  history?: Content[];
-  systemInstruction?: string | Content;
-  generationConfig?: GenerationConfig;
   [key: string]: unknown;
 }
 
 interface ChatSession {
   sendMessage: (request: string | Part[]) => Promise<GenerateContentResult>;
   sendMessageStream: (request: string | Part[]) => Promise<StreamGenerateContentResult>;
-  getHistory: () => Promise<Content[]>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -119,54 +94,31 @@ interface ChatSession {
 
 export const PROVIDER_NAME: ProviderName = 'gemini';
 
-/**
- * Check if client is GoogleGenerativeAI or GoogleGenAI
- */
 export function canHandle(client: unknown): boolean {
   if (!client || typeof client !== 'object') return false;
-
   const constructorName = client.constructor?.name;
-
-  // @google/generative-ai
   if (constructorName === 'GoogleGenerativeAI') return true;
-
-  // @google/genai
   if (constructorName === 'GoogleGenAI') return true;
-
-  // Check by shape: has getGenerativeModel
   const c = client as Record<string, unknown>;
   if (typeof c.getGenerativeModel === 'function') return true;
-
-  // @google/genai has models.generate
   if (c.models && typeof (c.models as Record<string, unknown>).generate === 'function') {
     return true;
   }
-
   return false;
 }
 
-/**
- * Wrap Gemini client with tracing
- */
 export function wrap(client: unknown): unknown {
   const geminiClient = client as GeminiClient;
-
   return new Proxy(geminiClient, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
-
       if (prop === 'getGenerativeModel' && typeof value === 'function') {
         return wrapGetGenerativeModel(value.bind(target));
       }
-
       return value;
     },
   });
 }
-
-// ─────────────────────────────────────────────────────────────
-// Model Wrapper
-// ─────────────────────────────────────────────────────────────
 
 function wrapGetGenerativeModel(
   originalFn: (config: ModelConfig) => GenerativeModel
@@ -181,26 +133,22 @@ function wrapGenerativeModel(model: GenerativeModel, modelName: string): Generat
   return new Proxy(model, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
-
       if (prop === 'generateContent' && typeof value === 'function') {
         return wrapGenerateContent(value.bind(target), modelName);
       }
-
       if (prop === 'generateContentStream' && typeof value === 'function') {
         return wrapGenerateContentStream(value.bind(target), modelName);
       }
-
       if (prop === 'startChat' && typeof value === 'function') {
         return wrapStartChat(value.bind(target), modelName);
       }
-
       return value;
     },
   });
 }
 
 // ─────────────────────────────────────────────────────────────
-// generateContent Wrapper
+// generateContent
 // ─────────────────────────────────────────────────────────────
 
 function wrapGenerateContent(
@@ -216,25 +164,26 @@ function wrapGenerateContent(
     try {
       const result = await originalFn(request);
       const durationMs = Date.now() - startTime;
-      const extracted = extractGenerateContentResult(result);
+
+      // Build raw response from Gemini's response object
+      const rawResponse = buildRawResponse(result.response);
 
       const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: modelName,
         input,
-        output: extracted.output,
-        inputTokens: extracted.inputTokens,
-        outputTokens: extracted.outputTokens,
+        rawResponse, // Server extracts everything
         durationMs,
         status: 'success',
         streaming: false,
-        metadata: extracted.metadata,
       });
 
-      // Register function calls for hierarchy linking
-      // Gemini uses function names as IDs since there's no explicit ID
-      if (spanId && extracted.functionCallIds.length > 0) {
-        registerToolCalls(extracted.functionCallIds, spanId);
+      // Register function calls for hierarchy
+      if (spanId) {
+        const functionCallIds = extractFunctionCallIds(result.response);
+        if (functionCallIds.length > 0) {
+          registerToolCalls(functionCallIds, spanId);
+        }
       }
 
       return result;
@@ -253,7 +202,7 @@ function wrapGenerateContent(
 }
 
 // ─────────────────────────────────────────────────────────────
-// generateContentStream Wrapper
+// generateContentStream
 // ─────────────────────────────────────────────────────────────
 
 function wrapGenerateContentStream(
@@ -268,10 +217,7 @@ function wrapGenerateContentStream(
 
     try {
       const result = await originalFn(request);
-
-      // Wrap the stream to capture content
       const wrappedStream = wrapStream(result.stream, modelName, input, startTime);
-
       return {
         ...result,
         stream: wrappedStream,
@@ -296,31 +242,53 @@ async function* wrapStream(
   input: unknown,
   startTime: number
 ): AsyncIterable<GenerateContentStreamChunk> {
-  const chunks: string[] = [];
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cachedTokens = 0;
-  let thoughtsTokens = 0;
+  // Accumulate to build final response
+  const finalResponse: {
+    candidates: Candidate[];
+    usageMetadata?: UsageMetadata;
+  } = { candidates: [{ content: { parts: [] } }] };
   let error: Error | null = null;
+  let firstTokenMs: number | undefined;
+  let firstTokenReceived = false;
 
   try {
     for await (const chunk of stream) {
-      // Extract text from chunk
+      // Accumulate text
       try {
         const text = chunk.text();
         if (text) {
-          chunks.push(text);
+          if (!firstTokenReceived) {
+            firstTokenReceived = true;
+            firstTokenMs = Date.now() - startTime;
+          }
+          // Add text part to accumulated response
+          const parts = finalResponse.candidates[0].content?.parts || [];
+          const lastPart = parts[parts.length - 1];
+          if (lastPart?.text !== undefined) {
+            lastPart.text += text;
+          } else {
+            parts.push({ text });
+          }
         }
       } catch {
         // text() may throw if no text content
       }
 
-      // Extract tokens from final chunk
+      // Extract candidates for function calls
+      if (chunk.candidates?.[0]?.content?.parts) {
+        for (const part of chunk.candidates[0].content.parts) {
+          if (part.functionCall) {
+            finalResponse.candidates[0].content?.parts?.push(part);
+          }
+        }
+      }
+
+      // Capture usage and finish reason from last chunk
       if (chunk.usageMetadata) {
-        inputTokens = chunk.usageMetadata.promptTokenCount || 0;
-        outputTokens = chunk.usageMetadata.candidatesTokenCount || 0;
-        cachedTokens = chunk.usageMetadata.cachedContentTokenCount || 0;
-        thoughtsTokens = chunk.usageMetadata.thoughtsTokenCount || 0;
+        finalResponse.usageMetadata = chunk.usageMetadata;
+      }
+      if (chunk.candidates?.[0]?.finishReason) {
+        finalResponse.candidates[0].finishReason = chunk.candidates[0].finishReason;
       }
 
       yield chunk;
@@ -341,27 +309,29 @@ async function* wrapStream(
         streaming: true,
       });
     } else {
-      captureTrace({
+      const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: modelName,
         input,
-        output: chunks.join(''),
-        inputTokens,
-        outputTokens,
+        rawResponse: finalResponse,
         durationMs,
         status: 'success',
         streaming: true,
-        metadata: {
-          cachedTokens: cachedTokens > 0 ? cachedTokens : undefined,
-          thoughtsTokens: thoughtsTokens > 0 ? thoughtsTokens : undefined,
-        },
+        firstTokenMs,
       });
+
+      if (spanId) {
+        const functionCallIds = extractFunctionCallIdsFromCandidates(finalResponse.candidates);
+        if (functionCallIds.length > 0) {
+          registerToolCalls(functionCallIds, spanId);
+        }
+      }
     }
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// Chat Wrapper
+// Chat
 // ─────────────────────────────────────────────────────────────
 
 function wrapStartChat(
@@ -378,15 +348,12 @@ function wrapChatSession(chat: ChatSession, modelName: string): ChatSession {
   return new Proxy(chat, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
-
       if (prop === 'sendMessage' && typeof value === 'function') {
         return wrapSendMessage(value.bind(target), modelName);
       }
-
       if (prop === 'sendMessageStream' && typeof value === 'function') {
         return wrapSendMessageStream(value.bind(target), modelName);
       }
-
       return value;
     },
   });
@@ -400,29 +367,28 @@ function wrapSendMessage(
     request: string | Part[]
   ): Promise<GenerateContentResult> {
     const startTime = Date.now();
-    const input = typeof request === 'string' ? request : request;
+    const input = request;
 
     try {
       const result = await originalFn(request);
       const durationMs = Date.now() - startTime;
-      const extracted = extractGenerateContentResult(result);
+      const rawResponse = buildRawResponse(result.response);
 
       const spanId = captureTrace({
         provider: PROVIDER_NAME,
         model: modelName,
         input,
-        output: extracted.output,
-        inputTokens: extracted.inputTokens,
-        outputTokens: extracted.outputTokens,
+        rawResponse,
         durationMs,
         status: 'success',
         streaming: false,
-        metadata: extracted.metadata,
       });
 
-      // Register function calls for hierarchy linking
-      if (spanId && extracted.functionCallIds.length > 0) {
-        registerToolCalls(extracted.functionCallIds, spanId);
+      if (spanId) {
+        const functionCallIds = extractFunctionCallIds(result.response);
+        if (functionCallIds.length > 0) {
+          registerToolCalls(functionCallIds, spanId);
+        }
       }
 
       return result;
@@ -448,12 +414,11 @@ function wrapSendMessageStream(
     request: string | Part[]
   ): Promise<StreamGenerateContentResult> {
     const startTime = Date.now();
-    const input = typeof request === 'string' ? request : request;
+    const input = request;
 
     try {
       const result = await originalFn(request);
       const wrappedStream = wrapStream(result.stream, modelName, input, startTime);
-
       return {
         ...result,
         stream: wrappedStream,
@@ -473,85 +438,45 @@ function wrapSendMessageStream(
 }
 
 // ─────────────────────────────────────────────────────────────
-// Extraction Helpers
+// Helpers
 // ─────────────────────────────────────────────────────────────
 
 function extractInput(request: GenerateContentRequest | string): unknown {
-  if (typeof request === 'string') {
-    return request;
-  }
-
-  // Extract contents (messages)
-  if (request.contents) {
-    return request.contents;
-  }
-
+  if (typeof request === 'string') return request;
+  if (request.contents) return request.contents;
   return request;
 }
 
-function extractGenerateContentResult(result: GenerateContentResult): {
-  output: unknown;
-  inputTokens: number;
-  outputTokens: number;
-  metadata: Record<string, unknown>;
-  functionCallIds: string[];
-} {
-  const response = result.response;
+function buildRawResponse(response: GenerateContentResponse): unknown {
+  // Build a serializable response object
+  return {
+    candidates: response.candidates,
+    usageMetadata: response.usageMetadata,
+  };
+}
 
-  // Extract text output
-  let output: unknown = null;
-  try {
-    output = response.text();
-  } catch {
-    // text() may throw if response has function calls or other non-text content
-    output = safeExtract(() => {
-      const content = response.candidates?.[0]?.content;
-      if (content?.parts) {
-        return content.parts;
-      }
-      return null;
-    }, null);
-  }
-
-  // Extract token usage
-  const usage = response.usageMetadata;
-  const inputTokens = isValidNumber(usage?.promptTokenCount) ? usage!.promptTokenCount! : 0;
-  const outputTokens = isValidNumber(usage?.candidatesTokenCount) ? usage!.candidatesTokenCount! : 0;
-
-  // Extract function call IDs for hierarchy linking
-  // Gemini doesn't have explicit IDs, so we generate one from the function name + index
-  const functionCallIds: string[] = [];
+function extractFunctionCallIds(response: GenerateContentResponse): string[] {
+  const ids: string[] = [];
   const parts = response.candidates?.[0]?.content?.parts;
   if (parts) {
     parts.forEach((part, index) => {
       if (part.functionCall?.name) {
-        // Generate a deterministic ID from function name and index
-        functionCallIds.push(`gemini-fc-${part.functionCall.name}-${index}`);
+        ids.push(`gemini-fc-${part.functionCall.name}-${index}`);
       }
     });
   }
+  return ids;
+}
 
-  // Build metadata
-  const metadata: Record<string, unknown> = {};
-
-  if (usage?.cachedContentTokenCount && usage.cachedContentTokenCount > 0) {
-    metadata.cachedTokens = usage.cachedContentTokenCount;
+function extractFunctionCallIdsFromCandidates(candidates: Candidate[]): string[] {
+  const ids: string[] = [];
+  const parts = candidates?.[0]?.content?.parts;
+  if (parts) {
+    parts.forEach((part, index) => {
+      if (part.functionCall?.name) {
+        ids.push(`gemini-fc-${part.functionCall.name}-${index}`);
+      }
+    });
   }
-
-  if (usage?.thoughtsTokenCount && usage.thoughtsTokenCount > 0) {
-    metadata.thoughtsTokens = usage.thoughtsTokenCount;
-  }
-
-  const finishReason = response.candidates?.[0]?.finishReason;
-  if (finishReason) {
-    metadata.finishReason = finishReason;
-  }
-
-  return {
-    output,
-    inputTokens,
-    outputTokens,
-    metadata: Object.keys(metadata).length > 0 ? metadata : {},
-    functionCallIds,
-  };
+  return ids;
 }
