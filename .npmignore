@@ -1,0 +1,9 @@
+# Excluir source maps del paquete npm
+dist/**/*.map
+
+# Excluir archivos de desarrollo
+*.log
+.DS_Store
+.vscode/
+.idea/
+
