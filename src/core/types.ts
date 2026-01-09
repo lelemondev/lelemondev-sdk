@@ -18,7 +18,7 @@ export interface ServiceConfig {
 export interface LelemonConfig {
   /** API key (or set LELEMON_API_KEY env var) */
   apiKey?: string;
-  /** API endpoint (default: https://lelemon.dev) */
+  /** API endpoint (default: https://api.lelemon.dev) */
   endpoint?: string;
   /** Enable debug logging */
   debug?: boolean;

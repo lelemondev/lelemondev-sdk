@@ -22,7 +22,7 @@ let initialized = false;
 // Configuration
 // ─────────────────────────────────────────────────────────────
 
-const DEFAULT_ENDPOINT = 'https://www.lelemon.dev';
+const DEFAULT_ENDPOINT = 'https://api.lelemon.dev';
 
 /**
  * Initialize the SDK
