@@ -30,7 +30,8 @@ npm install @lelemondev/sdk
 ## Quick Start
 
 ```typescript
-import { init, observe } from '@lelemondev/sdk';
+// Import from provider-specific entry point for smaller bundle size
+import { init, observe } from '@lelemondev/sdk/openai';
 import OpenAI from 'openai';
 
 // 1. Initialize once
@@ -44,6 +45,27 @@ const response = await openai.chat.completions.create({
   model: 'gpt-4',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
+```
+
+### Provider-Specific Imports
+
+Each provider has its own entry point for optimal bundle size:
+
+```typescript
+// OpenAI
+import { init, observe, flush } from '@lelemondev/sdk/openai';
+
+// Anthropic
+import { init, observe, flush } from '@lelemondev/sdk/anthropic';
+
+// AWS Bedrock
+import { init, observe, flush } from '@lelemondev/sdk/bedrock';
+
+// Google Gemini
+import { init, observe, flush } from '@lelemondev/sdk/gemini';
+
+// OpenRouter
+import { init, observe, flush } from '@lelemondev/sdk/openrouter';
 ```
 
 ## Supported Providers
@@ -61,7 +83,7 @@ const response = await openai.chat.completions.create({
 [OpenRouter](https://openrouter.ai) provides unified access to 400+ models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API.
 
 ```typescript
-import { init, observe } from '@lelemondev/sdk';
+import { init, observe } from '@lelemondev/sdk/openrouter';
 import OpenAI from 'openai';
 
 init({ apiKey: process.env.LELEMON_API_KEY });
@@ -94,7 +116,7 @@ The SDK works with **any Node.js application**. Framework integrations are optio
 For long-running processes, the SDK auto-flushes every second (configurable via `flushIntervalMs`):
 
 ```typescript
-import { init, observe } from '@lelemondev/sdk';
+import { init, observe } from '@lelemondev/sdk/openai';
 import OpenAI from 'openai';
 
 init({ apiKey: process.env.LELEMON_API_KEY });
@@ -119,7 +141,7 @@ async function handleRequest(userId: string, message: string) {
 For scripts or serverless functions, call `flush()` before the process exits:
 
 ```typescript
-import { init, observe, flush } from '@lelemondev/sdk';
+import { init, observe, flush } from '@lelemondev/sdk/openai';
 import OpenAI from 'openai';
 
 init({ apiKey: process.env.LELEMON_API_KEY });
@@ -144,7 +166,7 @@ main();
 
 ```typescript
 import http from 'http';
-import { init, observe, flush } from '@lelemondev/sdk';
+import { init, observe, flush } from '@lelemondev/sdk/openai';
 import OpenAI from 'openai';
 
 init({ apiKey: process.env.LELEMON_API_KEY });
@@ -194,7 +216,7 @@ Framework integrations automate the `flush()` call so you don't have to think ab
 
 ```typescript
 // app/api/chat/route.ts
-import { init, observe } from '@lelemondev/sdk';
+import { init, observe } from '@lelemondev/sdk/openai';
 import { withObserve } from '@lelemondev/sdk/next';
 import { after } from 'next/server';
 import OpenAI from 'openai';
@@ -219,7 +241,7 @@ export const POST = withObserve(
 
 ```typescript
 import express from 'express';
-import { init, observe } from '@lelemondev/sdk';
+import { init, observe } from '@lelemondev/sdk/openai';
 import { createMiddleware } from '@lelemondev/sdk/express';
 import OpenAI from 'openai';
 
@@ -241,7 +263,7 @@ app.post('/chat', async (req, res) => {
 ### AWS Lambda
 
 ```typescript
-import { init, observe } from '@lelemondev/sdk';
+import { init, observe } from '@lelemondev/sdk/openai';
 import { withObserve } from '@lelemondev/sdk/lambda';
 import OpenAI from 'openai';
 
@@ -265,7 +287,7 @@ export const handler = withObserve(async (event) => {
 
 ```typescript
 import { Hono } from 'hono';
-import { init, observe } from '@lelemondev/sdk';
+import { init, observe } from '@lelemondev/sdk/openai';
 import { createMiddleware } from '@lelemondev/sdk/hono';
 import OpenAI from 'openai';
 
@@ -299,8 +321,14 @@ init({
   endpoint: 'https://...',    // Optional, custom endpoint
   debug: false,               // Optional, enable debug logs
   disabled: false,            // Optional, disable tracing
-  batchSize: 10,              // Optional, items per batch
-  flushIntervalMs: 1000,      // Optional, auto-flush interval
+  batchSize: 10,              // Optional, items per batch (default: 10)
+  flushIntervalMs: 1000,      // Optional, auto-flush interval in ms (default: 1000)
+  requestTimeoutMs: 10000,    // Optional, HTTP request timeout in ms (default: 10000)
+  service: {                  // Optional, service metadata for telemetry
+    name: 'my-ai-app',        // Service name
+    version: '1.0.0',         // Service version
+    environment: 'production' // Deployment environment
+  }
 });
 ```
 
@@ -323,6 +351,101 @@ Manually flush pending traces. Use in serverless without framework integration.
 
 ```typescript
 await flush();
+```
+
+### `isEnabled()`
+
+Check if tracing is enabled (useful for conditional logic).
+
+```typescript
+import { isEnabled } from '@lelemondev/sdk/openai';
+
+if (isEnabled()) {
+  console.log('Tracing is active');
+}
+```
+
+### `trace(name, fn)` / `trace(options, fn)`
+
+Group multiple LLM calls under a single trace. Useful for agents, RAG pipelines, and multi-step workflows.
+
+```typescript
+import { trace, span } from '@lelemondev/sdk/openai';
+
+// Simple usage
+await trace('sales-agent', async () => {
+  const response = await openai.chat.completions.create({...});
+  return response;
+});
+
+// With options
+await trace({
+  name: 'rag-query',
+  input: userQuestion,
+  metadata: { source: 'api' },
+  tags: ['production']
+}, async () => {
+  // All LLM calls inside become children of this trace
+  const docs = await searchVectors(userQuestion);
+  const response = await openai.chat.completions.create({...});
+  return response;
+});
+```
+
+### `span(options)`
+
+Manually capture a span for non-LLM operations (retrieval, embedding, tool calls). Must be called within a `trace()` block.
+
+```typescript
+import { trace, span } from '@lelemondev/sdk/openai';
+
+await trace('rag-pipeline', async () => {
+  // Capture a retrieval span
+  const t0 = Date.now();
+  const docs = await pinecone.query({ vector, topK: 5 });
+  span({
+    type: 'retrieval',
+    name: 'pinecone-search',
+    input: { topK: 5 },
+    output: { count: docs.length },
+    durationMs: Date.now() - t0,
+  });
+
+  // LLM call is automatically captured
+  return openai.chat.completions.create({...});
+});
+```
+
+**Span types:** `retrieval`, `embedding`, `tool`, `guardrail`, `rerank`, `custom`
+
+### `captureSpan(options)`
+
+Lower-level API for manual span capture. Works both inside and outside `trace()` blocks.
+
+```typescript
+import { captureSpan } from '@lelemondev/sdk/openai';
+
+captureSpan({
+  type: 'tool',
+  name: 'get_weather',
+  input: { location: 'San Francisco' },
+  output: { temperature: 72, conditions: 'sunny' },
+  durationMs: 150,
+  status: 'success', // or 'error'
+});
+```
+
+### `getTraceContext()`
+
+Get the current trace context (useful for advanced scenarios).
+
+```typescript
+import { getTraceContext } from '@lelemondev/sdk/openai';
+
+const ctx = getTraceContext();
+if (ctx) {
+  console.log('Inside trace:', ctx.name, ctx.traceId);
+}
 ```
 
 ## User & Session Tracking
@@ -409,13 +532,17 @@ app.post('/chat', async (req, res) => {
 
 ### Reusable Context with createObserve()
 
-When you have multiple LLM clients or make calls from different places, use `createObserve()` to avoid repeating context:
+When you have multiple LLM clients or make calls from different places, use `createObserve()` to avoid repeating context.
+
+> **Note:** `createObserve` is imported from the generic `@lelemondev/sdk` entry point (not provider-specific) because it works with any provider.
 
 ```typescript
-import { createObserve } from '@lelemondev/sdk';
+import { init, createObserve } from '@lelemondev/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
 
 // Create a scoped observe function with user context
 const observeForUser = createObserve({
@@ -439,7 +566,9 @@ await gemini.getGenerativeModel({ model: 'gemini-pro' }).generateContent('...');
 Set up user context once, use it everywhere:
 
 ```typescript
-import { createObserve } from '@lelemondev/sdk';
+import { init, createObserve } from '@lelemondev/sdk';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
 
 // Middleware to attach observe function to request
 app.use((req, res, next) => {
@@ -469,6 +598,8 @@ app.post('/summarize', async (req, res) => {
 ### Multi-tenant Application
 
 ```typescript
+import { observe } from '@lelemondev/sdk/openai';
+
 app.post('/api/:tenantId/chat', async (req, res) => {
   const openai = observe(new OpenAI(), {
     userId: req.user.id,
@@ -491,7 +622,9 @@ When your application spans multiple services (REST API, WebSocket server, backg
 ```typescript
 // Shared utility for creating observe context
 // utils/observe-context.ts
-import { createObserve } from '@lelemondev/sdk';
+import { init, createObserve } from '@lelemondev/sdk';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
 
 export function createUserObserve(userId: string, sessionId: string, service: string) {
   return createObserve({

@@ -114,7 +114,8 @@ function generateLlmsTxt(providers) {
 ## Quick Start
 
 \`\`\`typescript
-import { init, observe } from '@lelemondev/sdk';
+// Import from provider-specific entry point for smaller bundle size
+import { init, observe } from '@lelemondev/sdk/openai';
 import OpenAI from 'openai';
 
 init({ apiKey: process.env.LELEMON_API_KEY });
@@ -126,6 +127,12 @@ const response = await openai.chat.completions.create({
 });
 \`\`\`
 
+## Provider-Specific Imports
+
+Each provider has its own entry point for optimal bundle size:
+
+${providers.map(p => `- \`@lelemondev/sdk/${p.filename}\` - ${capitalize(p.name)}`).join('\n')}
+
 ## Supported Providers
 
 ${providers.map(p => `- **${capitalize(p.name)}**: ${p.methods.join(', ') || 'All methods'}${p.streaming ? ' (streaming supported)' : ''}`).join('\n')}
@@ -136,7 +143,11 @@ ${providers.map(p => `- **${capitalize(p.name)}**: ${p.methods.join(', ') || 'Al
 - **init()**: Initialize SDK with API key and configuration
 - **trace()**: Group multiple LLM calls under a single trace (for agents, RAG)
 - **span()**: Manually capture non-LLM operations (retrieval, embedding, tool calls)
+- **captureSpan()**: Lower-level API for manual span capture
+- **getTraceContext()**: Get current trace context
 - **flush()**: Manually flush pending traces (required in serverless)
+- **isEnabled()**: Check if tracing is enabled
+- **createObserve()**: Create a scoped observe function with preset context (import from \`@lelemondev/sdk\`)
 - **Framework integrations**: Auto-flush middleware for Next.js, Express, Lambda, Hono
 
 ## Version
@@ -318,6 +329,11 @@ Initialize the SDK. Must be called once before using observe().
 - \`disabled\` (boolean, optional): Disable all tracing
 - \`batchSize\` (number, optional): Items per batch (default: 10)
 - \`flushIntervalMs\` (number, optional): Auto-flush interval in ms (default: 1000)
+- \`requestTimeoutMs\` (number, optional): HTTP request timeout in ms (default: 10000)
+- \`service\` (object, optional): Service metadata for telemetry
+  - \`name\`: Service name (e.g., 'my-ai-app')
+  - \`version\`: Service version (e.g., '1.0.0')
+  - \`environment\`: Deployment environment (e.g., 'production')
 
 ### observe(client, options?)
 
@@ -399,6 +415,57 @@ await trace('rag-query', async () => {
 });
 \`\`\`
 
+### captureSpan(options)
+
+Lower-level API for manual span capture. Works both inside and outside trace() blocks.
+
+**Parameters:**
+- \`type\`: 'retrieval' | 'embedding' | 'tool' | 'guardrail' | 'rerank' | 'custom'
+- \`name\` (string, required): Span name
+- \`input\` (unknown, required): Input data
+- \`output\` (unknown, required): Output data
+- \`durationMs\` (number, required): Duration in milliseconds
+- \`status\` ('success' | 'error', optional): Span status (default: 'success')
+- \`errorMessage\` (string, optional): Error message if status is 'error'
+- \`toolCallId\` (string, optional): Tool call ID for linking to parent LLM
+- \`metadata\` (object, optional): Custom metadata
+
+**Returns:** void
+
+### getTraceContext()
+
+Get the current trace context (useful for advanced scenarios).
+
+**Returns:** TraceContext | undefined
+
+### createObserve(defaultOptions)
+
+Create a scoped observe function with preset context. Import from \`@lelemondev/sdk\` (not provider-specific).
+
+**Parameters:**
+- \`defaultOptions\`: ObserveOptions to apply to all observe calls
+  - \`sessionId\`: Group traces by session
+  - \`userId\`: Associate traces with a user
+  - \`metadata\`: Custom key-value metadata
+  - \`tags\`: Array of string tags
+
+**Returns:** A scoped observe function
+
+**Example:**
+\`\`\`typescript
+import { init, createObserve } from '@lelemondev/sdk';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+
+const observeForUser = createObserve({
+  userId: 'user-123',
+  sessionId: 'session-456',
+});
+
+const openai = observeForUser(new OpenAI());
+const anthropic = observeForUser(new Anthropic());
+\`\`\`
+
 ---
 
 # Traced Data
@@ -434,7 +501,7 @@ Each LLM call automatically captures:
 The SDK is fully typed and preserves your client's original types:
 
 \`\`\`typescript
-import { observe, type ObserveOptions, type LelemonConfig } from '@lelemondev/sdk';
+import { observe, type ObserveOptions, type LelemonConfig } from '@lelemondev/sdk/openai';
 
 // Client type is preserved
 const openai = observe(new OpenAI()); // type: OpenAI

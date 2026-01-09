@@ -42,6 +42,9 @@ export { trace, span, getTraceContext } from './core/context';
 // Manual span capture (lower-level API)
 export { captureSpan } from './core/capture';
 
+// Generic observe (auto-detects provider)
+export { observe, createObserve } from './observe';
+
 // ─────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────
