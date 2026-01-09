@@ -88,7 +88,20 @@ export interface SpanOptions {
 // AsyncLocalStorage for trace context
 // ─────────────────────────────────────────────────────────────
 
-const traceStorage = new AsyncLocalStorage<TraceContext>();
+// Use a global symbol to ensure single instance across all entry points
+// This fixes the issue where @lelemondev/sdk and @lelemondev/sdk/bedrock
+// would create separate AsyncLocalStorage instances due to bundler splitting
+const TRACE_STORAGE_KEY = Symbol.for('@lelemondev/sdk:traceStorage');
+
+function getTraceStorage(): AsyncLocalStorage<TraceContext> {
+  const globalObj = globalThis as Record<symbol, AsyncLocalStorage<TraceContext> | undefined>;
+  if (!globalObj[TRACE_STORAGE_KEY]) {
+    globalObj[TRACE_STORAGE_KEY] = new AsyncLocalStorage<TraceContext>();
+  }
+  return globalObj[TRACE_STORAGE_KEY];
+}
+
+const traceStorage = getTraceStorage();
 
 // ─────────────────────────────────────────────────────────────
 // ID Generation

@@ -14,15 +14,26 @@ import { getTraceContext, generateId } from './context';
 // Global context (set via observe options)
 // ─────────────────────────────────────────────────────────────
 
-let globalContext: ObserveOptions = {};
+// Use a global symbol to ensure single instance across all entry points
+// This fixes the issue where @lelemondev/sdk and @lelemondev/sdk/bedrock
+// would create separate globalContext due to bundler splitting
+const GLOBAL_CONTEXT_KEY = Symbol.for('@lelemondev/sdk:globalContext');
+
+function getGlobalContextStore(): { context: ObserveOptions } {
+  const globalObj = globalThis as Record<symbol, { context: ObserveOptions } | undefined>;
+  if (!globalObj[GLOBAL_CONTEXT_KEY]) {
+    globalObj[GLOBAL_CONTEXT_KEY] = { context: {} };
+  }
+  return globalObj[GLOBAL_CONTEXT_KEY];
+}
 
 export function setGlobalContext(options: ObserveOptions): void {
-  globalContext = options;
+  getGlobalContextStore().context = options;
   debug('Global context updated', options);
 }
 
 export function getGlobalContext(): ObserveOptions {
-  return globalContext;
+  return getGlobalContextStore().context;
 }
 
 // ─────────────────────────────────────────────────────────────
