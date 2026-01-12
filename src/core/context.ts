@@ -52,6 +52,10 @@ export interface TraceContext {
   outputKey?: string | false;
   /** Output transform function */
   outputTransform?: (result: unknown) => unknown;
+  /** Session ID for grouping traces */
+  sessionId?: string;
+  /** User ID for filtering by user */
+  userId?: string;
   /** Map of toolCallId → llmSpanId for linking tool spans to their parent LLM */
   pendingToolCalls: Map<string, string>;
 }
@@ -97,6 +101,16 @@ export interface TraceOptions {
    * // Output: "Response: hello (100 tokens)"
    */
   outputTransform?: (result: unknown) => unknown;
+  /**
+   * Session ID for grouping related traces (e.g., conversation ID).
+   * Useful for multi-tenant servers where each request has different context.
+   */
+  sessionId?: string;
+  /**
+   * User ID for filtering traces by user.
+   * Useful for multi-tenant servers where each request has different context.
+   */
+  userId?: string;
 }
 
 export interface SpanOptions {
@@ -280,6 +294,8 @@ export async function trace<T>(
     tags: options.tags,
     outputKey: options.outputKey,
     outputTransform: options.outputTransform,
+    sessionId: options.sessionId,
+    userId: options.userId,
     pendingToolCalls: new Map(),
   };
 
@@ -384,8 +400,8 @@ function sendRootSpan(context: TraceContext, result?: unknown, error?: Error): v
     status: error ? 'error' : 'success',
     errorMessage: error?.message,
     streaming: false,
-    sessionId: globalContext.sessionId,
-    userId: globalContext.userId,
+    sessionId: context.sessionId ?? globalContext.sessionId,
+    userId: context.userId ?? globalContext.userId,
     metadata: {
       ...globalContext.metadata,
       ...context.metadata,
