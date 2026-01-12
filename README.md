@@ -352,6 +352,62 @@ const openai = observe(new OpenAI(), {
 });
 ```
 
+#### Multi-Tenant Servers (Important!)
+
+For multi-tenant servers handling concurrent requests from different users, **create a new observed client per-request** with the user's context:
+
+```typescript
+// ❌ WRONG - Global client with no context
+const client = observe(new BedrockRuntimeClient());
+
+async function handleRequest(userId: string, sessionId: string) {
+  await client.send(command); // No user/session info!
+}
+
+// ✅ CORRECT - Observed client per-request with context
+const rawClient = new BedrockRuntimeClient();
+
+async function handleRequest(userId: string, sessionId: string) {
+  const client = observe(rawClient, {
+    userId,
+    sessionId,
+    metadata: { tenantId },
+  });
+  await client.send(command); // Traces include user/session!
+}
+```
+
+**Recommended pattern for NestJS/Express:**
+
+```typescript
+// llm.provider.ts
+@Injectable()
+export class LlmProvider {
+  private rawClient: BedrockRuntimeClient;
+
+  constructor() {
+    this.rawClient = new BedrockRuntimeClient({ region: 'us-east-1' });
+  }
+
+  // Create observed client with per-request context
+  getClient(ctx: { userId: string; sessionId: string; tenantId?: string }) {
+    return observe(this.rawClient, {
+      userId: ctx.userId,
+      sessionId: ctx.sessionId,
+      metadata: { tenantId: ctx.tenantId },
+    });
+  }
+}
+
+// Usage in service
+const client = this.llmProvider.getClient({
+  userId: request.userId,
+  sessionId: request.conversationId,
+  tenantId: request.tenantId,
+});
+await client.send(command);
+```
+
 ### `flush()`
 
 Manually flush pending traces. Use in serverless without framework integration.
