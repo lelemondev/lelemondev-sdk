@@ -15,6 +15,17 @@ export interface ServiceConfig {
   environment?: string;
 }
 
+export interface RedactionConfig {
+  /** Custom regex patterns to redact (replaced with [REDACTED]) */
+  patterns?: RegExp[];
+  /** Additional key names to redact (case-insensitive, partial match) */
+  keys?: string[];
+  /** Redact all email addresses (replaced with [EMAIL]) */
+  emails?: boolean;
+  /** Redact phone numbers with 9+ digits (replaced with [PHONE]) */
+  phones?: boolean;
+}
+
 export interface LelemonConfig {
   /** API key (or set LELEMON_API_KEY env var) */
   apiKey?: string;
@@ -32,6 +43,8 @@ export interface LelemonConfig {
   requestTimeoutMs?: number;
   /** Service metadata for telemetry */
   service?: ServiceConfig;
+  /** Optional PII redaction configuration */
+  redaction?: RedactionConfig;
 }
 
 // ─────────────────────────────────────────────────────────────

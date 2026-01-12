@@ -20,6 +20,7 @@ https://lelemondev.github.io/lelemondev-sdk/llms-full.txt
 - **Framework Integrations** - Next.js, Express, Lambda, Hono
 - **Streaming Support** - Full support for streaming responses
 - **Type-safe** - Preserves your client's TypeScript types
+- **PII Redaction** - Optional email, phone, and custom pattern redaction
 
 ## Installation
 
@@ -328,6 +329,12 @@ init({
     name: 'my-ai-app',        // Service name
     version: '1.0.0',         // Service version
     environment: 'production' // Deployment environment
+  },
+  redaction: {                // Optional, PII redaction config
+    emails: true,             // Redact email addresses → [EMAIL]
+    phones: true,             // Redact 9+ digit numbers → [PHONE]
+    patterns: [/SSN-\d{9}/g], // Custom regex patterns → [REDACTED]
+    keys: ['cpf', 'rut'],     // Additional sensitive key names
   }
 });
 ```
@@ -779,8 +786,46 @@ Each LLM call automatically captures:
 The SDK automatically sanitizes sensitive data:
 
 - API keys and tokens are redacted
-- Large payloads are truncated
+- Large payloads are truncated (100KB limit per field)
 - Errors are captured safely
+
+### PII Redaction
+
+Optionally redact personally identifiable information before traces are sent:
+
+```typescript
+init({
+  apiKey: process.env.LELEMON_API_KEY,
+  redaction: {
+    emails: true,   // user@example.com → [EMAIL]
+    phones: true,   // 123456789 → [PHONE] (9+ digits)
+  }
+});
+```
+
+**Custom patterns** for domain-specific PII:
+
+```typescript
+init({
+  redaction: {
+    // Regex patterns (replaced with [REDACTED])
+    patterns: [
+      /SSN-\d{9}/g,           // Social Security Numbers
+      /CARD-\d{16}/g,         // Credit card numbers
+      /CPF-\d{11}/g,          // Brazilian CPF
+    ],
+    // Additional key names to redact (case-insensitive, partial match)
+    keys: ['cpf', 'rut', 'dni', 'national_id'],
+  }
+});
+```
+
+**Default redacted keys** (always active):
+- `api_key`, `apikey`, `password`, `secret`, `authorization`
+- `access_token`, `auth_token`, `bearer_token`, `refresh_token`, `id_token`, `session_token`
+
+**Safe keys** (never redacted even if containing "token"):
+- `inputTokens`, `outputTokens`, `totalTokens`, `promptTokens`, `completionTokens`, etc.
 
 ## Environment Variables
 

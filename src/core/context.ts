@@ -48,6 +48,10 @@ export interface TraceContext {
   metadata?: Record<string, unknown>;
   /** Trace tags */
   tags?: string[];
+  /** Output extraction config */
+  outputKey?: string | false;
+  /** Output transform function */
+  outputTransform?: (result: unknown) => unknown;
   /** Map of toolCallId → llmSpanId for linking tool spans to their parent LLM */
   pendingToolCalls: Map<string, string>;
 }
@@ -61,6 +65,38 @@ export interface TraceOptions {
   metadata?: Record<string, unknown>;
   /** Tags for filtering */
   tags?: string[];
+  /**
+   * Key to extract from result object for cleaner output display.
+   * If not specified, auto-detection tries: text, content, message, output, response, result, answer.
+   * Set to `false` to disable auto-extraction and show raw result.
+   *
+   * @example
+   * // Auto-extract 'text' field
+   * trace({ name: 'agent' }, async () => ({ text: 'hello', tokens: 100 }));
+   * // Output: "hello"
+   *
+   * @example
+   * // Explicit key
+   * trace({ name: 'agent', outputKey: 'response' }, async () => ({ response: 'hello' }));
+   *
+   * @example
+   * // Disable auto-extraction
+   * trace({ name: 'agent', outputKey: false }, async () => ({ a: 1, b: 2 }));
+   * // Output: { a: 1, b: 2 }
+   */
+  outputKey?: string | false;
+  /**
+   * Transform function for custom output formatting.
+   * Takes precedence over outputKey.
+   *
+   * @example
+   * trace({
+   *   name: 'agent',
+   *   outputTransform: (r) => `Response: ${r.text} (${r.tokens} tokens)`
+   * }, async () => ({ text: 'hello', tokens: 100 }));
+   * // Output: "Response: hello (100 tokens)"
+   */
+  outputTransform?: (result: unknown) => unknown;
 }
 
 export interface SpanOptions {
@@ -190,22 +226,33 @@ export function clearToolCall(toolCallId: string): void {
 /**
  * Execute a function within a trace context.
  * Creates a root "agent" span that contains all LLM calls and tool executions.
- * The result of the function becomes the output of the root span.
  *
- * @example Simple usage (just name)
+ * **Output Auto-Extraction:** If the function returns an object with common text fields
+ * (`text`, `content`, `message`, `output`, `response`, `result`, `answer`),
+ * the SDK automatically extracts that field for cleaner display.
+ * Use `outputKey` to specify a custom field, or `outputKey: false` to disable.
+ *
+ * @example Simple usage
  * ```typescript
  * await trace('sales-agent', async () => {
- *   await client.send(new ConverseCommand({...}));
- *   return finalResponse;
+ *   return { text: 'Hello!', tokens: 100 };
+ *   // Output shown: "Hello!" (auto-extracted from 'text')
  * });
  * ```
  *
- * @example With options
+ * @example With options and explicit outputKey
  * ```typescript
- * await trace({ name: 'rag-query', input: question, tags: ['production'] }, async () => {
- *   const docs = await search(question);
- *   span({ type: 'retrieval', name: 'pinecone', output: { count: docs.length } });
- *   return client.send(new ConverseCommand({...}));
+ * await trace({ name: 'agent', outputKey: 'reply' }, async () => {
+ *   return { reply: 'Hello!', cost: 0.01 };
+ *   // Output shown: "Hello!"
+ * });
+ * ```
+ *
+ * @example Disable auto-extraction
+ * ```typescript
+ * await trace({ name: 'agent', outputKey: false }, async () => {
+ *   return { a: 1, b: 2 };
+ *   // Output shown: { a: 1, b: 2 }
  * });
  * ```
  */
@@ -231,6 +278,8 @@ export async function trace<T>(
     input: options.input,
     metadata: options.metadata,
     tags: options.tags,
+    outputKey: options.outputKey,
+    outputTransform: options.outputTransform,
     pendingToolCalls: new Map(),
   };
 
@@ -252,6 +301,56 @@ export async function trace<T>(
   });
 }
 
+/** Common field names for auto-extracting text output (in priority order) */
+const OUTPUT_TEXT_FIELDS = ['text', 'content', 'message', 'output', 'response', 'result', 'answer'];
+
+/**
+ * Extract display-friendly output from a result object.
+ *
+ * Priority:
+ * 1. outputTransform function (if provided)
+ * 2. Explicit outputKey (if provided)
+ * 3. Auto-detection of common text fields
+ * 4. Raw result (if outputKey === false or no text field found)
+ *
+ * @internal
+ */
+function extractOutput(
+  result: unknown,
+  outputKey?: string | false,
+  outputTransform?: (r: unknown) => unknown,
+): unknown {
+  // 1. Custom transform takes precedence
+  if (outputTransform) {
+    try {
+      return outputTransform(result);
+    } catch {
+      return result; // Fallback on transform error
+    }
+  }
+
+  // 2. Explicit key or disabled
+  if (outputKey === false) return result;
+  if (typeof outputKey === 'string' && result && typeof result === 'object') {
+    const obj = result as Record<string, unknown>;
+    return outputKey in obj ? obj[outputKey] : result;
+  }
+
+  // 3. Auto-detect common text fields
+  if (result === null || result === undefined) return result;
+  if (typeof result !== 'object' || Array.isArray(result)) return result;
+
+  const obj = result as Record<string, unknown>;
+  for (const field of OUTPUT_TEXT_FIELDS) {
+    if (field in obj && typeof obj[field] === 'string') {
+      return obj[field];
+    }
+  }
+
+  // 4. No text field found, return as-is
+  return result;
+}
+
 /**
  * Send the root "agent" span when the trace completes.
  * This span represents the entire agent execution with input/output.
@@ -266,8 +365,8 @@ function sendRootSpan(context: TraceContext, result?: unknown, error?: Error): v
   const globalContext = getGlobalContext();
   const durationMs = Date.now() - context.startTime;
 
-  // Sanitize result if it's a string (common case for agent responses)
-  const output = error ? null : result;
+  // Extract clean output for display
+  const output = error ? null : extractOutput(result, context.outputKey, context.outputTransform);
 
   const rootSpan: CreateTraceRequest = {
     spanType: 'agent' as SpanType,

@@ -5,8 +5,8 @@
  * Called by providers to record LLM calls.
  */
 
-import type { ProviderName, CreateTraceRequest, ObserveOptions, CaptureSpanOptions, SpanType } from './types';
-import { getTransport, getTelemetry } from './config';
+import type { ProviderName, CreateTraceRequest, ObserveOptions, CaptureSpanOptions, SpanType, RedactionConfig } from './types';
+import { getTransport, getTelemetry, getConfig } from './config';
 import { traceCapture, traceCaptureError, debug } from './logger';
 import { getTraceContext, generateId } from './context';
 
@@ -273,6 +273,19 @@ const SENSITIVE_TOKEN_PATTERNS = ['access_token', 'auth_token', 'bearer_token', 
 // Keys that contain "token" but are safe (LLM token counts)
 const SAFE_TOKEN_KEYS = ['inputtokens', 'outputtokens', 'totaltokens', 'prompttokens', 'completiontokens', 'cachereadtokens', 'cachewritetokens', 'cachereadinputtokens', 'cachewriteinputtokens', 'reasoningtokens'];
 
+// Built-in PII patterns
+const BUILTIN_PATTERNS = {
+  emails: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+  phones: /\b\d{9,}\b/g,
+};
+
+/**
+ * Get redaction config from global config
+ */
+function getRedactionConfig(): RedactionConfig {
+  return getConfig().redaction ?? {};
+}
+
 /**
  * Check if a key should be redacted
  */
@@ -294,13 +307,47 @@ function isSensitiveKey(key: string): boolean {
     return true;
   }
 
+  // Check custom keys from redaction config
+  const customKeys = getRedactionConfig().keys ?? [];
+  if (customKeys.some((k) => lowerKey.includes(k.toLowerCase()))) {
+    return true;
+  }
+
   return false;
+}
+
+/**
+ * Apply PII redaction patterns to a string value
+ */
+function redactString(value: string): string {
+  const config = getRedactionConfig();
+  let result = value;
+
+  // Apply custom patterns first
+  for (const pattern of config.patterns ?? []) {
+    // Reset regex lastIndex for global patterns
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, '[REDACTED]');
+  }
+
+  // Apply built-in email pattern if enabled
+  if (config.emails) {
+    result = result.replace(BUILTIN_PATTERNS.emails, '[EMAIL]');
+  }
+
+  // Apply built-in phone pattern if enabled
+  if (config.phones) {
+    result = result.replace(BUILTIN_PATTERNS.phones, '[PHONE]');
+  }
+
+  return result;
 }
 
 /**
  * Sanitize input before sending
  * - Truncates large strings
  * - Removes sensitive data
+ * - Applies PII redaction patterns
  */
 function sanitizeInput(input: unknown): unknown {
   return sanitize(input, 0);
@@ -320,9 +367,13 @@ function sanitize(value: unknown, depth: number): unknown {
   if (value === null || value === undefined) return value;
 
   if (typeof value === 'string') {
-    return value.length > MAX_STRING_LENGTH
-      ? value.slice(0, MAX_STRING_LENGTH) + '...[truncated]'
-      : value;
+    // Apply PII redaction patterns
+    let result = redactString(value);
+    // Truncate if too long
+    if (result.length > MAX_STRING_LENGTH) {
+      result = result.slice(0, MAX_STRING_LENGTH) + '...[truncated]';
+    }
+    return result;
   }
 
   if (typeof value === 'number' || typeof value === 'boolean') {
@@ -351,3 +402,14 @@ function sanitize(value: unknown, depth: number): unknown {
   // Functions, symbols, etc.
   return String(value);
 }
+
+// ─────────────────────────────────────────────────────────────
+// Test Helpers (exported for testing only)
+// ─────────────────────────────────────────────────────────────
+
+/** @internal - Exported for testing only */
+export const __test__ = {
+  sanitize,
+  redactString,
+  isSensitiveKey,
+};
