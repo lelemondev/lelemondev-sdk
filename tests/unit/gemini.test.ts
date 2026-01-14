@@ -79,6 +79,21 @@ describe('Gemini Provider', () => {
       expect(canHandle('string')).toBe(false);
       expect(canHandle(123)).toBe(false);
     });
+
+    // Direct model wrapping (for observe(model) pattern)
+    it('should detect GenerativeModel by constructor name', () => {
+      const model = { constructor: { name: 'GenerativeModel' } };
+      expect(canHandle(model)).toBe(true);
+    });
+
+    it('should detect model by shape (generateContent + model property)', () => {
+      const model = {
+        generateContent: vi.fn(),
+        generateContentStream: vi.fn(),
+        model: 'gemini-2.5-flash',
+      };
+      expect(canHandle(model)).toBe(true);
+    });
   });
 
   describe('generateContent', () => {
@@ -387,6 +402,67 @@ describe('Gemini Provider', () => {
       const result = wrapped.otherMethod();
 
       expect(result).toBe('other');
+    });
+  });
+
+  describe('wrap (direct model)', () => {
+    it('should wrap GenerativeModel directly and capture traces', async () => {
+      const mockResult = createGenerateContentResult();
+      const mockGenerateContent = vi.fn().mockResolvedValue(mockResult);
+
+      const model = {
+        model: 'gemini-2.5-flash',
+        generateContent: mockGenerateContent,
+        generateContentStream: vi.fn(),
+        startChat: vi.fn(),
+        constructor: { name: 'GenerativeModel' },
+      };
+
+      const wrapped = wrap(model) as typeof model;
+      await wrapped.generateContent('Hello');
+
+      expect(mockCaptureTrace).toHaveBeenCalledOnce();
+      expect(mockCaptureTrace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+          input: 'Hello',
+          status: 'success',
+          streaming: false,
+        })
+      );
+    });
+
+    it('should wrap model startChat and capture sendMessage traces', async () => {
+      const mockResult = createGenerateContentResult({ text: 'Chat response' });
+      const mockSendMessage = vi.fn().mockResolvedValue(mockResult);
+
+      const mockChat = {
+        sendMessage: mockSendMessage,
+        sendMessageStream: vi.fn(),
+        getHistory: vi.fn().mockResolvedValue([]),
+      };
+
+      const model = {
+        model: 'gemini-2.5-flash',
+        generateContent: vi.fn(),
+        generateContentStream: vi.fn(),
+        startChat: vi.fn(() => mockChat),
+        constructor: { name: 'GenerativeModel' },
+      };
+
+      const wrapped = wrap(model) as typeof model;
+      const chat = wrapped.startChat();
+      await chat.sendMessage('Hello');
+
+      expect(mockCaptureTrace).toHaveBeenCalledOnce();
+      expect(mockCaptureTrace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+          input: 'Hello',
+        })
+      );
     });
   });
 });

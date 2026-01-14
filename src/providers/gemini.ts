@@ -94,9 +94,28 @@ interface ChatSession {
 
 export const PROVIDER_NAME: ProviderName = 'gemini';
 
+/**
+ * Check if the object is a GenerativeModel (not the client)
+ */
+function isGenerativeModel(obj: unknown): boolean {
+  if (!obj || typeof obj !== 'object') return false;
+  const constructorName = (obj as { constructor?: { name?: string } }).constructor?.name;
+  if (constructorName === 'GenerativeModel') return true;
+
+  // Duck typing: has generateContent + model property (string)
+  const o = obj as Record<string, unknown>;
+  return (
+    typeof o.generateContent === 'function' &&
+    typeof o.generateContentStream === 'function' &&
+    typeof o.model === 'string'
+  );
+}
+
 export function canHandle(client: unknown): boolean {
   if (!client || typeof client !== 'object') return false;
   const constructorName = client.constructor?.name;
+
+  // Client detection (GoogleGenerativeAI)
   if (constructorName === 'GoogleGenerativeAI') return true;
   if (constructorName === 'GoogleGenAI') return true;
   const c = client as Record<string, unknown>;
@@ -104,10 +123,21 @@ export function canHandle(client: unknown): boolean {
   if (c.models && typeof (c.models as Record<string, unknown>).generate === 'function') {
     return true;
   }
+
+  // Model detection (GenerativeModel) - allows observe(model) pattern
+  if (isGenerativeModel(client)) return true;
+
   return false;
 }
 
 export function wrap(client: unknown): unknown {
+  // Direct model wrapping: observe(model) pattern
+  if (isGenerativeModel(client)) {
+    const model = client as GenerativeModel;
+    return wrapGenerativeModel(model, model.model);
+  }
+
+  // Client wrapping: observe(client) pattern
   const geminiClient = client as GeminiClient;
   return new Proxy(geminiClient, {
     get(target, prop, receiver) {
