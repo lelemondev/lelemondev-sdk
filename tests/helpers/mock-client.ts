@@ -83,6 +83,26 @@ export function createMockGeminiClient(generateContentImpl?: ReturnType<typeof v
   };
 }
 
+export function createMockGoogleGenAIClient(overrides?: {
+  generateContent?: ReturnType<typeof vi.fn>;
+  generateContentStream?: ReturnType<typeof vi.fn>;
+  chatsCreate?: ReturnType<typeof vi.fn>;
+}) {
+  return {
+    models: {
+      generateContent: overrides?.generateContent || vi.fn(),
+      generateContentStream: overrides?.generateContentStream || vi.fn(),
+    },
+    chats: {
+      create: overrides?.chatsCreate || vi.fn(() => ({
+        sendMessage: vi.fn(),
+        sendMessageStream: vi.fn(),
+      })),
+    },
+    constructor: { name: 'GoogleGenAI' },
+  };
+}
+
 export function createMockGeminiModel(overrides?: {
   generateContent?: ReturnType<typeof vi.fn>;
   generateContentStream?: ReturnType<typeof vi.fn>;

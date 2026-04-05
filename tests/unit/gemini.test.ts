@@ -42,9 +42,9 @@ describe('Gemini Provider', () => {
       expect(canHandle(client)).toBe(true);
     });
 
-    it('should detect GoogleGenAI by constructor name', () => {
+    it('should NOT detect GoogleGenAI (handled by google-genai provider)', () => {
       const client = { constructor: { name: 'GoogleGenAI' } };
-      expect(canHandle(client)).toBe(true);
+      expect(canHandle(client)).toBe(false);
     });
 
     it('should detect by getGenerativeModel method', () => {
@@ -52,9 +52,9 @@ describe('Gemini Provider', () => {
       expect(canHandle(client)).toBe(true);
     });
 
-    it('should detect @google/genai by models.generate', () => {
+    it('should NOT detect @google/genai by models.generate (handled by google-genai provider)', () => {
       const client = { models: { generate: vi.fn() } };
-      expect(canHandle(client)).toBe(true);
+      expect(canHandle(client)).toBe(false);
     });
 
     it('should reject OpenAI client', () => {

@@ -7,6 +7,7 @@
 import * as openai from './providers/openai';
 import * as anthropic from './providers/anthropic';
 import * as bedrock from './providers/bedrock';
+import * as googleGenai from './providers/google-genai';
 import * as gemini from './providers/gemini';
 import * as openrouter from './providers/openrouter';
 import { setGlobalContext } from './core/capture';
@@ -67,6 +68,11 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   if (bedrock.canHandle(client)) {
     clientWrapped('bedrock');
     return bedrock.wrap(client) as T;
+  }
+
+  if (googleGenai.canHandle(client)) {
+    clientWrapped('gemini');
+    return googleGenai.wrap(client) as T;
   }
 
   if (gemini.canHandle(client)) {

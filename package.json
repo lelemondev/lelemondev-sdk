@@ -57,6 +57,11 @@
       "import": "./dist/gemini.mjs",
       "require": "./dist/gemini.js"
     },
+    "./google-genai": {
+      "types": "./dist/google-genai.d.ts",
+      "import": "./dist/google-genai.mjs",
+      "require": "./dist/google-genai.js"
+    },
     "./openrouter": {
       "types": "./dist/openrouter.d.ts",
       "import": "./dist/openrouter.mjs",
@@ -102,6 +107,9 @@
       ],
       "gemini": [
         "./dist/gemini.d.ts"
+      ],
+      "google-genai": [
+        "./dist/google-genai.d.ts"
       ],
       "openrouter": [
         "./dist/openrouter.d.ts"
@@ -151,14 +159,17 @@
   },
   "devDependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.962.0",
+    "@google/genai": "^1.0.0",
     "@google/generative-ai": "^0.24.1",
-    "@types/node": "^20.0.0",
-    "@vitest/coverage-v8": "^2.0.0",
+    "@anthropic-ai/sdk": "^0.82.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.0.0",
     "dotenv": "^17.2.3",
     "openai": "^6.15.0",
     "tsup": "^8.5.1",
+    "vite": "^6.0.0",
     "typedoc": "^0.28.15",
-    "typescript": "^5.9.3",
-    "vitest": "^2.0.0"
+    "typescript": "^6.0.0",
+    "vitest": "^4.0.0"
   }
 }
