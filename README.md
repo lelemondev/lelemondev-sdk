@@ -62,8 +62,11 @@ import { init, observe, flush } from '@lelemondev/sdk/anthropic';
 // AWS Bedrock
 import { init, observe, flush } from '@lelemondev/sdk/bedrock';
 
-// Google Gemini
+// Google Gemini (supports both @google/genai and @google/generative-ai)
 import { init, observe, flush } from '@lelemondev/sdk/gemini';
+
+// Google GenAI (dedicated entry point for @google/genai)
+import { init, observe, flush } from '@lelemondev/sdk/google-genai';
 
 // OpenRouter
 import { init, observe, flush } from '@lelemondev/sdk/openrouter';
@@ -77,7 +80,8 @@ import { init, observe, flush } from '@lelemondev/sdk/openrouter';
 | OpenRouter | ✅ | `chat.completions.create()` (access to 400+ models) |
 | Anthropic | ✅ | `messages.create()`, `messages.stream()` |
 | AWS Bedrock | ✅ | `ConverseCommand`, `ConverseStreamCommand`, `InvokeModelCommand` |
-| Google Gemini | ✅ | `generateContent()`, `generateContentStream()`, `chat.sendMessage()` |
+| Google Gemini (`@google/generative-ai`) | ✅ | `generateContent()`, `generateContentStream()`, `chat.sendMessage()` |
+| Google GenAI (`@google/genai`) | ✅ | `models.generateContent()`, `models.generateContentStream()`, `chats.create()`, `chat.sendMessage()` |
 
 ### OpenRouter
 
@@ -107,6 +111,116 @@ const response = await openrouter.chat.completions.create({
 ```
 
 Models are specified in `provider/model` format (e.g., `anthropic/claude-3-opus`, `openai/gpt-4`, `meta-llama/llama-3-70b`). See [OpenRouter Models](https://openrouter.ai/models) for the full list.
+
+### Google Gemini
+
+The SDK supports both the **new** `@google/genai` (recommended) and the **old** `@google/generative-ai` packages. Both are auto-detected by `observe()`.
+
+#### Recommended: `@google/genai` (new SDK)
+
+```bash
+npm install @google/genai
+```
+
+```typescript
+import { init, observe, flush } from '@lelemondev/sdk/google-genai';
+import { GoogleGenAI } from '@google/genai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+
+const ai = observe(new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }));
+
+// Generate content
+const response = await ai.models.generateContent({
+  model: 'gemini-2.5-flash',
+  contents: 'Explain how observability works',
+});
+console.log(response.text);
+
+// Streaming
+const stream = await ai.models.generateContentStream({
+  model: 'gemini-2.5-flash',
+  contents: 'Write a short poem about monitoring',
+});
+for await (const chunk of stream) {
+  process.stdout.write(chunk.text ?? '');
+}
+
+// Chat (multi-turn)
+const chat = ai.chats.create({
+  model: 'gemini-2.5-flash',
+  history: [
+    { role: 'user', parts: [{ text: 'Hello' }] },
+    { role: 'model', parts: [{ text: 'Hi! How can I help?' }] },
+  ],
+});
+
+const reply = await chat.sendMessage({ message: 'What can you do?' });
+console.log(reply.text);
+
+// Streaming chat
+const chatStream = await chat.sendMessageStream({ message: 'Tell me more' });
+for await (const chunk of chatStream) {
+  process.stdout.write(chunk.text ?? '');
+}
+
+await flush();
+```
+
+#### With config (system instructions, temperature, tools)
+
+```typescript
+const response = await ai.models.generateContent({
+  model: 'gemini-2.5-flash',
+  contents: 'Analyze this data',
+  config: {
+    systemInstruction: 'You are a data analyst. Be concise.',
+    temperature: 0.3,
+    maxOutputTokens: 1000,
+    tools: [{ functionDeclarations: [myFunctionDecl] }],
+  },
+});
+
+// Access function calls if tools were used
+if (response.functionCalls) {
+  console.log(response.functionCalls);
+}
+```
+
+#### Legacy: `@google/generative-ai` (old SDK)
+
+Still supported but not recommended for new projects:
+
+```typescript
+import { init, observe, flush } from '@lelemondev/sdk/gemini';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// You can observe the client or the model directly
+const model = observe(genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }));
+
+const result = await model.generateContent('Hello!');
+console.log(result.response.text());
+
+await flush();
+```
+
+#### Auto-detection with generic `observe()`
+
+Both SDKs work with the generic entry point too:
+
+```typescript
+import { init, observe } from '@lelemondev/sdk';
+import { GoogleGenAI } from '@google/genai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+
+// Auto-detects @google/genai
+const ai = observe(new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }));
+```
 
 ## Usage Without Framework Integrations
 
@@ -602,7 +716,7 @@ When you have multiple LLM clients or make calls from different places, use `cre
 ```typescript
 import { init, createObserve } from '@lelemondev/sdk';
 import OpenAI from 'openai';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 
 init({ apiKey: process.env.LELEMON_API_KEY });
@@ -616,12 +730,12 @@ const observeForUser = createObserve({
 
 // All clients inherit the same context
 const openai = observeForUser(new OpenAI());
-const gemini = observeForUser(new GoogleGenerativeAI(apiKey));
+const ai = observeForUser(new GoogleGenAI({ apiKey }));
 const bedrock = observeForUser(new BedrockRuntimeClient({}));
 
 // All these calls will be associated with user-123
 await openai.chat.completions.create({ ... });
-await gemini.getGenerativeModel({ model: 'gemini-pro' }).generateContent('...');
+await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: '...' });
 ```
 
 ### In Middleware (Express)
@@ -653,7 +767,7 @@ app.post('/chat', async (req, res) => {
 });
 
 app.post('/summarize', async (req, res) => {
-  const gemini = req.observe(new GoogleGenerativeAI(apiKey));
+  const ai = req.observe(new GoogleGenAI({ apiKey }));
   // Same user context, different endpoint
 });
 ```
@@ -736,16 +850,18 @@ wss.on('connection', (ws, req) => {
 
   // Create observe function for this connection
   const observe = createUserObserve(userId, sessionId, 'websocket');
-  const gemini = observe(new GoogleGenerativeAI(apiKey));
+  const ai = observe(new GoogleGenAI({ apiKey }));
 
   ws.on('message', async (data) => {
     const { message } = JSON.parse(data);
 
     // This trace will be linked to the same session as the API calls
-    const model = gemini.getGenerativeModel({ model: 'gemini-pro' });
-    const result = await model.generateContent(message);
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: message,
+    });
 
-    ws.send(JSON.stringify({ response: result.response.text() }));
+    ws.send(JSON.stringify({ response: result.text }));
   });
 });
 ```
@@ -828,7 +944,7 @@ for await (const chunk of stream) {
 
 Each LLM call automatically captures:
 
-- **Provider** - openai, anthropic, bedrock, gemini
+- **Provider** - openai, anthropic, bedrock, gemini, openrouter
 - **Model** - gpt-4, claude-3-opus, gemini-pro, etc.
 - **Input** - Messages/prompt (sanitized)
 - **Output** - Response content
