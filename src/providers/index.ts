@@ -9,6 +9,7 @@ import type { ProviderName } from '../core/types';
 import * as openai from './openai';
 import * as anthropic from './anthropic';
 import * as bedrock from './bedrock';
+import * as googleGenai from './google-genai';
 import * as gemini from './gemini';
 
 // ─────────────────────────────────────────────────────────────
@@ -40,6 +41,11 @@ const providers: Provider[] = [
     name: 'bedrock',
     canHandle: bedrock.canHandle,
     wrap: bedrock.wrap,
+  },
+  {
+    name: 'gemini',
+    canHandle: googleGenai.canHandle,
+    wrap: googleGenai.wrap,
   },
   {
     name: 'gemini',
@@ -81,7 +87,7 @@ export function wrapClient<T>(client: T): T {
   // Unknown provider - return as-is with warning
   console.warn(
     '[Lelemon] Unknown client type. Tracing not enabled. ' +
-    'Supported: OpenAI, Anthropic, Bedrock, Gemini'
+    'Supported: OpenAI, Anthropic, Bedrock, Gemini, Google GenAI'
   );
 
   return client;

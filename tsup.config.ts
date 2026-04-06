@@ -9,6 +9,7 @@ export default defineConfig({
     anthropic: 'src/anthropic.ts',
     bedrock: 'src/bedrock.ts',
     gemini: 'src/gemini.ts',
+    'google-genai': 'src/google-genai.ts',
     openrouter: 'src/openrouter.ts',
     // Framework integrations
     next: 'src/integrations/next.ts',
@@ -24,7 +25,7 @@ export default defineConfig({
   minify: true,
   treeshake: true,
   splitting: false,
-  target: 'es2020',
+  target: 'es2022',
   outDir: 'dist',
   // Compatible with Node.js, Bun, Deno
   platform: 'neutral',

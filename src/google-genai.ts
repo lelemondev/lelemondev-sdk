@@ -1,16 +1,19 @@
 /**
- * Google Gemini Provider Entry Point
+ * Google GenAI Provider Entry Point
  *
  * @example
  * ```typescript
- * import { init, observe, flush } from '@lelemondev/sdk/gemini';
- * import { GoogleGenerativeAI } from '@google/generative-ai';
+ * import { init, observe, flush } from '@lelemondev/sdk/google-genai';
+ * import { GoogleGenAI } from '@google/genai';
  *
  * init({ apiKey: process.env.LELEMON_API_KEY });
- * const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
- * const model = observe(genAI.getGenerativeModel({ model: 'gemini-pro' }));
+ * const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+ * const client = observe(ai);
  *
- * await model.generateContent('Hello!');
+ * const response = await client.models.generateContent({
+ *   model: 'gemini-pro',
+ *   contents: 'Hello!',
+ * });
  * await flush();
  * ```
  */
@@ -38,9 +41,9 @@ import type { ObserveOptions } from './core/types';
 import { clientWrapped, warn, debug } from './core/logger';
 
 /**
- * Wrap a Gemini model with automatic tracing
+ * Wrap a Google GenAI client with automatic tracing
  *
- * Supports both @google/generative-ai (old) and @google/genai (new) SDKs.
+ * Supports both @google/genai (new) and @google/generative-ai (old) SDKs.
  */
 export function observe<T>(client: T, options?: ObserveOptions): T {
   if (options) {
@@ -65,6 +68,6 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
     return gemini.wrap(client) as T;
   }
 
-  warn('Client is not a Gemini model. Use @lelemondev/sdk/gemini with Google Generative AI or Google GenAI SDK.');
+  warn('Client is not a Google GenAI or Gemini model. Use @lelemondev/sdk/google-genai with Google GenAI or Google Generative AI SDK.');
   return client;
 }

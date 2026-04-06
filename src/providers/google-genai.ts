@@ -1,9 +1,16 @@
 /**
- * Google Gemini Provider Wrapper
+ * Google GenAI Provider Wrapper
  *
- * Wraps @google/generative-ai to automatically capture LLM calls.
+ * Wraps @google/genai (the NEW SDK) to automatically capture LLM calls.
  * SDK thin: only captures timing and raw response.
  * Server smart: extracts tokens, output, tools, etc.
+ *
+ * New API shape:
+ *   const ai = new GoogleGenAI({ apiKey });
+ *   ai.models.generateContent({ model, contents, config? })
+ *   ai.models.generateContentStream({ model, contents, config? })
+ *   ai.chats.create({ model }) => Chat
+ *   chat.sendMessage({ message }) / chat.sendMessageStream({ message })
  */
 
 import type { ProviderName } from '../core/types';
@@ -11,58 +18,39 @@ import { captureTrace, captureError } from '../core/capture';
 import { registerToolCalls } from '../core/context';
 
 // ─────────────────────────────────────────────────────────────
-// Types
+// Duck-typed Interfaces (no runtime imports from @google/genai)
 // ─────────────────────────────────────────────────────────────
 
-interface GeminiClient {
-  getGenerativeModel: (config: ModelConfig) => GenerativeModel;
+interface GoogleGenAIClient {
+  models: ModelsNamespace;
+  chats: ChatsNamespace;
 }
 
-interface ModelConfig {
+interface ModelsNamespace {
+  generateContent: (params: GenerateContentParams) => Promise<GenerateContentResponse>;
+  generateContentStream: (params: GenerateContentParams) => Promise<AsyncIterable<GenerateContentStreamChunk>>;
+}
+
+interface ChatsNamespace {
+  create: (params: ChatCreateParams) => Chat;
+}
+
+interface GenerateContentParams {
   model: string;
+  contents: unknown;
+  config?: Record<string, unknown>;
   [key: string]: unknown;
-}
-
-interface GenerativeModel {
-  generateContent: (request: GenerateContentRequest | string) => Promise<GenerateContentResult>;
-  generateContentStream: (request: GenerateContentRequest | string) => Promise<StreamGenerateContentResult>;
-  startChat: (config?: ChatConfig) => ChatSession;
-  model: string;
-}
-
-interface GenerateContentRequest {
-  contents?: Content[];
-  [key: string]: unknown;
-}
-
-interface Content {
-  role?: string;
-  parts: Part[];
-}
-
-interface Part {
-  text?: string;
-  functionCall?: { name: string; args: unknown };
-  [key: string]: unknown;
-}
-
-interface GenerateContentResult {
-  response: GenerateContentResponse;
-}
-
-interface StreamGenerateContentResult {
-  stream: AsyncIterable<GenerateContentStreamChunk>;
-  response: Promise<GenerateContentResponse>;
 }
 
 interface GenerateContentResponse {
-  text: () => string;
+  text: string;
   candidates?: Candidate[];
   usageMetadata?: UsageMetadata;
+  modelVersion?: string;
 }
 
 interface GenerateContentStreamChunk {
-  text: () => string;
+  text?: string;
   candidates?: Candidate[];
   usageMetadata?: UsageMetadata;
 }
@@ -72,20 +60,38 @@ interface Candidate {
   finishReason?: string;
 }
 
-interface UsageMetadata {
-  promptTokenCount?: number;
-  candidatesTokenCount?: number;
-  cachedContentTokenCount?: number;
-  thoughtsTokenCount?: number;
+interface Content {
+  role?: string;
+  parts?: Part[];
 }
 
-interface ChatConfig {
+interface Part {
+  text?: string;
+  functionCall?: { name: string; args: unknown };
   [key: string]: unknown;
 }
 
-interface ChatSession {
-  sendMessage: (request: string | Part[]) => Promise<GenerateContentResult>;
-  sendMessageStream: (request: string | Part[]) => Promise<StreamGenerateContentResult>;
+interface UsageMetadata {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  totalTokenCount?: number;
+  thoughtsTokenCount?: number;
+  cachedContentTokenCount?: number;
+}
+
+interface ChatCreateParams {
+  model: string;
+  [key: string]: unknown;
+}
+
+interface Chat {
+  sendMessage: (params: ChatSendMessageParams) => Promise<GenerateContentResponse>;
+  sendMessageStream: (params: ChatSendMessageParams) => Promise<AsyncIterable<GenerateContentStreamChunk>>;
+}
+
+interface ChatSendMessageParams {
+  message: unknown;
+  [key: string]: unknown;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -94,111 +100,91 @@ interface ChatSession {
 
 export const PROVIDER_NAME: ProviderName = 'gemini';
 
-/**
- * Check if the object is a GenerativeModel (not the client)
- */
-function isGenerativeModel(obj: unknown): boolean {
-  if (!obj || typeof obj !== 'object') return false;
-  const constructorName = (obj as { constructor?: { name?: string } }).constructor?.name;
-  if (constructorName === 'GenerativeModel') return true;
-
-  // Duck typing: has generateContent + model property (string)
-  const o = obj as Record<string, unknown>;
-  return (
-    typeof o.generateContent === 'function' &&
-    typeof o.generateContentStream === 'function' &&
-    typeof o.model === 'string'
-  );
-}
-
 export function canHandle(client: unknown): boolean {
   if (!client || typeof client !== 'object') return false;
-  const constructorName = client.constructor?.name;
+  const constructorName = (client as { constructor?: { name?: string } }).constructor?.name;
 
-  // Client detection (GoogleGenerativeAI)
-  if (constructorName === 'GoogleGenerativeAI') return true;
+  // Constructor name detection
+  if (constructorName === 'GoogleGenAI') return true;
+
+  // Duck typing: client.models with generateContent function
   const c = client as Record<string, unknown>;
-  if (typeof c.getGenerativeModel === 'function') return true;
-
-  // Model detection (GenerativeModel) - allows observe(model) pattern
-  if (isGenerativeModel(client)) return true;
+  if (
+    c.models &&
+    typeof c.models === 'object' &&
+    typeof (c.models as Record<string, unknown>).generateContent === 'function' &&
+    c.chats &&
+    typeof c.chats === 'object'
+  ) {
+    return true;
+  }
 
   return false;
 }
 
 export function wrap(client: unknown): unknown {
-  // Direct model wrapping: observe(model) pattern
-  if (isGenerativeModel(client)) {
-    const model = client as GenerativeModel;
-    return wrapGenerativeModel(model, model.model);
-  }
+  const genaiClient = client as GoogleGenAIClient;
 
-  // Client wrapping: observe(client) pattern
-  const geminiClient = client as GeminiClient;
-  return new Proxy(geminiClient, {
+  return new Proxy(genaiClient, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
-      if (prop === 'getGenerativeModel' && typeof value === 'function') {
-        return wrapGetGenerativeModel(value.bind(target));
+
+      if (prop === 'models' && value && typeof value === 'object') {
+        return wrapModels(value as ModelsNamespace);
       }
+
+      if (prop === 'chats' && value && typeof value === 'object') {
+        return wrapChats(value as ChatsNamespace);
+      }
+
       return value;
     },
   });
 }
 
-function wrapGetGenerativeModel(
-  originalFn: (config: ModelConfig) => GenerativeModel
-): (config: ModelConfig) => GenerativeModel {
-  return function wrappedGetGenerativeModel(config: ModelConfig): GenerativeModel {
-    const model = originalFn(config);
-    return wrapGenerativeModel(model, config.model);
-  };
-}
+// ─────────────────────────────────────────────────────────────
+// Models namespace wrapping
+// ─────────────────────────────────────────────────────────────
 
-function wrapGenerativeModel(model: GenerativeModel, modelName: string): GenerativeModel {
-  return new Proxy(model, {
+function wrapModels(models: ModelsNamespace): ModelsNamespace {
+  return new Proxy(models, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
+
       if (prop === 'generateContent' && typeof value === 'function') {
-        return wrapGenerateContent(value.bind(target), modelName);
+        return wrapGenerateContent(value.bind(target));
       }
+
       if (prop === 'generateContentStream' && typeof value === 'function') {
-        return wrapGenerateContentStream(value.bind(target), modelName);
+        return wrapGenerateContentStream(value.bind(target));
       }
-      if (prop === 'startChat' && typeof value === 'function') {
-        return wrapStartChat(value.bind(target), modelName);
-      }
+
       return value;
     },
   });
 }
-
-// ─────────────────────────────────────────────────────────────
-// generateContent
-// ─────────────────────────────────────────────────────────────
 
 function wrapGenerateContent(
-  originalFn: (request: GenerateContentRequest | string) => Promise<GenerateContentResult>,
-  modelName: string
+  originalFn: (params: GenerateContentParams) => Promise<GenerateContentResponse>
 ) {
   return async function wrappedGenerateContent(
-    request: GenerateContentRequest | string
-  ): Promise<GenerateContentResult> {
+    params: GenerateContentParams
+  ): Promise<GenerateContentResponse> {
     const startTime = Date.now();
-    const input = extractInput(request);
+    const model = params.model;
+    const input = extractInput(params);
 
     try {
-      const result = await originalFn(request);
+      const response = await originalFn(params);
       const durationMs = Date.now() - startTime;
 
-      // Build raw response from Gemini's response object
-      const rawResponse = buildRawResponse(result.response);
+      const rawResponse = buildRawResponse(response);
 
       const spanId = captureTrace({
         provider: PROVIDER_NAME,
-        model: modelName,
+        model,
         input,
-        rawResponse, // Server extracts everything
+        rawResponse,
         durationMs,
         status: 'success',
         streaming: false,
@@ -206,17 +192,17 @@ function wrapGenerateContent(
 
       // Register function calls for hierarchy
       if (spanId) {
-        const functionCallIds = extractFunctionCallIds(result.response);
+        const functionCallIds = extractFunctionCallIds(response);
         if (functionCallIds.length > 0) {
           registerToolCalls(functionCallIds, spanId);
         }
       }
 
-      return result;
+      return response;
     } catch (error) {
       captureError({
         provider: PROVIDER_NAME,
-        model: modelName,
+        model,
         input,
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs: Date.now() - startTime,
@@ -232,26 +218,22 @@ function wrapGenerateContent(
 // ─────────────────────────────────────────────────────────────
 
 function wrapGenerateContentStream(
-  originalFn: (request: GenerateContentRequest | string) => Promise<StreamGenerateContentResult>,
-  modelName: string
+  originalFn: (params: GenerateContentParams) => Promise<AsyncIterable<GenerateContentStreamChunk>>
 ) {
   return async function wrappedGenerateContentStream(
-    request: GenerateContentRequest | string
-  ): Promise<StreamGenerateContentResult> {
+    params: GenerateContentParams
+  ): Promise<AsyncIterable<GenerateContentStreamChunk>> {
     const startTime = Date.now();
-    const input = extractInput(request);
+    const model = params.model;
+    const input = extractInput(params);
 
     try {
-      const result = await originalFn(request);
-      const wrappedStream = wrapStream(result.stream, modelName, input, startTime);
-      return {
-        ...result,
-        stream: wrappedStream,
-      };
+      const stream = await originalFn(params);
+      return wrapStream(stream, model, input, startTime);
     } catch (error) {
       captureError({
         provider: PROVIDER_NAME,
-        model: modelName,
+        model,
         input,
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs: Date.now() - startTime,
@@ -268,7 +250,6 @@ async function* wrapStream(
   input: unknown,
   startTime: number
 ): AsyncIterable<GenerateContentStreamChunk> {
-  // Accumulate to build final response
   const finalResponse: {
     candidates: Candidate[];
     usageMetadata?: UsageMetadata;
@@ -280,24 +261,19 @@ async function* wrapStream(
   try {
     for await (const chunk of stream) {
       // Accumulate text
-      try {
-        const text = chunk.text();
-        if (text) {
-          if (!firstTokenReceived) {
-            firstTokenReceived = true;
-            firstTokenMs = Date.now() - startTime;
-          }
-          // Add text part to accumulated response
-          const parts = finalResponse.candidates[0].content?.parts || [];
-          const lastPart = parts[parts.length - 1];
-          if (lastPart?.text !== undefined) {
-            lastPart.text += text;
-          } else {
-            parts.push({ text });
-          }
+      const text = chunk.text;
+      if (text) {
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          firstTokenMs = Date.now() - startTime;
         }
-      } catch {
-        // text() may throw if no text content
+        const parts = finalResponse.candidates[0].content?.parts || [];
+        const lastPart = parts[parts.length - 1];
+        if (lastPart?.text !== undefined) {
+          lastPart.text += text;
+        } else {
+          parts.push({ text });
+        }
       }
 
       // Extract candidates for function calls
@@ -357,48 +333,64 @@ async function* wrapStream(
 }
 
 // ─────────────────────────────────────────────────────────────
-// Chat
+// Chats namespace wrapping
 // ─────────────────────────────────────────────────────────────
 
-function wrapStartChat(
-  originalFn: (config?: ChatConfig) => ChatSession,
-  modelName: string
-): (config?: ChatConfig) => ChatSession {
-  return function wrappedStartChat(config?: ChatConfig): ChatSession {
-    const chat = originalFn(config);
-    return wrapChatSession(chat, modelName);
-  };
-}
-
-function wrapChatSession(chat: ChatSession, modelName: string): ChatSession {
-  return new Proxy(chat, {
+function wrapChats(chats: ChatsNamespace): ChatsNamespace {
+  return new Proxy(chats, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
-      if (prop === 'sendMessage' && typeof value === 'function') {
-        return wrapSendMessage(value.bind(target), modelName);
+
+      if (prop === 'create' && typeof value === 'function') {
+        return wrapChatsCreate(value.bind(target));
       }
-      if (prop === 'sendMessageStream' && typeof value === 'function') {
-        return wrapSendMessageStream(value.bind(target), modelName);
-      }
+
       return value;
     },
   });
 }
 
-function wrapSendMessage(
-  originalFn: (request: string | Part[]) => Promise<GenerateContentResult>,
+function wrapChatsCreate(
+  originalFn: (params: ChatCreateParams) => Chat
+): (params: ChatCreateParams) => Chat {
+  return function wrappedChatsCreate(params: ChatCreateParams): Chat {
+    const chat = originalFn(params);
+    return wrapChat(chat, params.model);
+  };
+}
+
+function wrapChat(chat: Chat, modelName: string): Chat {
+  return new Proxy(chat, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+
+      if (prop === 'sendMessage' && typeof value === 'function') {
+        return wrapChatSendMessage(value.bind(target), modelName);
+      }
+
+      if (prop === 'sendMessageStream' && typeof value === 'function') {
+        return wrapChatSendMessageStream(value.bind(target), modelName);
+      }
+
+      return value;
+    },
+  });
+}
+
+function wrapChatSendMessage(
+  originalFn: (params: ChatSendMessageParams) => Promise<GenerateContentResponse>,
   modelName: string
 ) {
-  return async function wrappedSendMessage(
-    request: string | Part[]
-  ): Promise<GenerateContentResult> {
+  return async function wrappedChatSendMessage(
+    params: ChatSendMessageParams
+  ): Promise<GenerateContentResponse> {
     const startTime = Date.now();
-    const input = request;
+    const input = params.message;
 
     try {
-      const result = await originalFn(request);
+      const response = await originalFn(params);
       const durationMs = Date.now() - startTime;
-      const rawResponse = buildRawResponse(result.response);
+      const rawResponse = buildRawResponse(response);
 
       const spanId = captureTrace({
         provider: PROVIDER_NAME,
@@ -411,13 +403,13 @@ function wrapSendMessage(
       });
 
       if (spanId) {
-        const functionCallIds = extractFunctionCallIds(result.response);
+        const functionCallIds = extractFunctionCallIds(response);
         if (functionCallIds.length > 0) {
           registerToolCalls(functionCallIds, spanId);
         }
       }
 
-      return result;
+      return response;
     } catch (error) {
       captureError({
         provider: PROVIDER_NAME,
@@ -432,23 +424,19 @@ function wrapSendMessage(
   };
 }
 
-function wrapSendMessageStream(
-  originalFn: (request: string | Part[]) => Promise<StreamGenerateContentResult>,
+function wrapChatSendMessageStream(
+  originalFn: (params: ChatSendMessageParams) => Promise<AsyncIterable<GenerateContentStreamChunk>>,
   modelName: string
 ) {
-  return async function wrappedSendMessageStream(
-    request: string | Part[]
-  ): Promise<StreamGenerateContentResult> {
+  return async function wrappedChatSendMessageStream(
+    params: ChatSendMessageParams
+  ): Promise<AsyncIterable<GenerateContentStreamChunk>> {
     const startTime = Date.now();
-    const input = request;
+    const input = params.message;
 
     try {
-      const result = await originalFn(request);
-      const wrappedStream = wrapStream(result.stream, modelName, input, startTime);
-      return {
-        ...result,
-        stream: wrappedStream,
-      };
+      const stream = await originalFn(params);
+      return wrapStream(stream, modelName, input, startTime);
     } catch (error) {
       captureError({
         provider: PROVIDER_NAME,
@@ -467,17 +455,15 @@ function wrapSendMessageStream(
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
-function extractInput(request: GenerateContentRequest | string): unknown {
-  if (typeof request === 'string') return request;
-  if (request.contents) return request.contents;
-  return request;
+function extractInput(params: GenerateContentParams): unknown {
+  return params.contents;
 }
 
 function buildRawResponse(response: GenerateContentResponse): unknown {
-  // Build a serializable response object
   return {
     candidates: response.candidates,
     usageMetadata: response.usageMetadata,
+    modelVersion: response.modelVersion,
   };
 }
 

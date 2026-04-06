@@ -47,7 +47,7 @@ function discoverProviders() {
     }
   }
 
-  return providers.sort((a, b) => a.name.localeCompare(b.name));
+  return providers.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 /**
@@ -80,9 +80,14 @@ function parseProvider(content, filename) {
   const descMatch = jsdoc.match(/\/\*\*\s*\n\s*\*\s*([^\n]+)/);
   const description = descMatch ? descMatch[1].trim() : `${capitalize(name)} Provider`;
 
+  const fileSlug = basename(filename, '.ts');
+  // Use filename for display (e.g., "google-genai" → "Google GenAI", "openai" → "OpenAI")
+  const displayName = formatDisplayName(fileSlug);
+
   return {
     name,
-    filename: basename(filename, '.ts'),
+    filename: fileSlug,
+    displayName,
     description,
     methods,
     streaming: hasStreaming,
@@ -93,12 +98,26 @@ function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+/** Map filename slugs to proper display names */
+const DISPLAY_NAMES = {
+  'openai': 'OpenAI',
+  'anthropic': 'Anthropic',
+  'bedrock': 'AWS Bedrock',
+  'gemini': 'Google Gemini',
+  'google-genai': 'Google GenAI',
+  'openrouter': 'OpenRouter',
+};
+
+function formatDisplayName(slug) {
+  return DISPLAY_NAMES[slug] || capitalize(slug);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Content Generation
 // ─────────────────────────────────────────────────────────────
 
 function generateLlmsTxt(providers) {
-  const providerList = providers.map(p => capitalize(p.name)).join(', ');
+  const providerList = [...new Set(providers.map(p => p.displayName))].join(', ');
 
   return `# @lelemondev/sdk
 
@@ -131,11 +150,11 @@ const response = await openai.chat.completions.create({
 
 Each provider has its own entry point for optimal bundle size:
 
-${providers.map(p => `- \`@lelemondev/sdk/${p.filename}\` - ${capitalize(p.name)}`).join('\n')}
+${providers.map(p => `- \`@lelemondev/sdk/${p.filename}\` - ${p.displayName}`).join('\n')}
 
 ## Supported Providers
 
-${providers.map(p => `- **${capitalize(p.name)}**: ${p.methods.join(', ') || 'All methods'}${p.streaming ? ' (streaming supported)' : ''}`).join('\n')}
+${providers.map(p => `- **${p.displayName}**: ${p.methods.join(', ') || 'All methods'}${p.streaming ? ' (streaming supported)' : ''}`).join('\n')}
 
 ## Core Concepts
 
@@ -158,7 +177,7 @@ Current version: ${VERSION}
 
 function generateLlmsFullTxt(providers) {
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf-8');
-  const providerList = providers.map(p => capitalize(p.name)).join(', ');
+  const providerList = [...new Set(providers.map(p => p.displayName))].join(', ');
 
   // Read integration docs
   const integrations = {
@@ -541,7 +560,7 @@ function generateProviderTable(providers) {
   const rows = providers.map(p => {
     const methods = p.methods.length > 0 ? p.methods.map(m => `\`${m}\``).join(', ') : 'All traced methods';
     const streaming = p.streaming ? 'Yes' : 'No';
-    return `| ${capitalize(p.name)} | ${methods} | ${streaming} |`;
+    return `| ${p.displayName} | ${methods} | ${streaming} |`;
   });
 
   return `| Provider | Methods | Streaming |
