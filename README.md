@@ -31,22 +31,188 @@ npm install @lelemondev/sdk
 ## Quick Start
 
 ```typescript
-// Import from provider-specific entry point for smaller bundle size
 import { init, observe } from '@lelemondev/sdk/openai';
 import OpenAI from 'openai';
 
-// 1. Initialize once
 init({ apiKey: process.env.LELEMON_API_KEY });
 
-// 2. Wrap your client
 const openai = observe(new OpenAI());
 
-// 3. Use normally - all calls traced automatically
 const response = await openai.chat.completions.create({
   model: 'gpt-4',
   messages: [{ role: 'user', content: 'Hello!' }],
 });
 ```
+
+That's the bare minimum — it works, but your traces will be flat and anonymous. The next section shows you how to get **structured, beautiful traces** in your dashboard from day one.
+
+## Recommended Usage
+
+The difference between messy traces and clear, actionable ones comes down to three things: **naming your traces**, **identifying users and sessions**, and **grouping related calls together**.
+
+### 1. Wrap your workflow with `trace()`
+
+Without `trace()`, each LLM call shows up as an isolated entry. With it, you get a hierarchical view that shows exactly what happened and why.
+
+```typescript
+import { init, observe, trace, span, flush } from '@lelemondev/sdk/openai';
+import OpenAI from 'openai';
+
+init({ apiKey: process.env.LELEMON_API_KEY });
+const openai = observe(new OpenAI());
+
+// ✅ Named trace groups everything into a clear hierarchy
+const result = await trace('answer-question', async () => {
+  // This LLM call appears as a child span — you can see it nested
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [{ role: 'user', content: 'What is observability?' }],
+  });
+
+  return response.choices[0].message.content;
+});
+```
+
+**In the dashboard, this renders as:**
+```
+▼ answer-question (trace)           1.2s  $0.003
+    ▼ gpt-4 (llm)                   1.2s  $0.003  320 tokens
+```
+
+Without `trace()`, you'd just see a flat `gpt-4` entry with no context.
+
+### 2. Add `userId` and `sessionId`
+
+These two fields unlock filtering, conversation grouping, and per-user analytics in the dashboard.
+
+```typescript
+// ✅ Always pass userId and sessionId — this is what makes the dashboard useful
+const openai = observe(new OpenAI(), {
+  userId: 'user-123',           // Who is making this request
+  sessionId: 'conversation-abc', // Groups multi-turn conversations together
+});
+```
+
+- **`userId`** → Filter traces by user, track costs per user, debug specific user issues
+- **`sessionId`** → See an entire conversation across multiple requests as one session
+
+### 3. Add spans for non-LLM operations
+
+LLM calls are traced automatically, but your pipeline probably does more: vector search, tool calls, reranking, guardrails. Use `span()` to capture these so the full picture shows up in the dashboard.
+
+```typescript
+import { trace, span } from '@lelemondev/sdk/openai';
+
+await trace('rag-pipeline', async () => {
+  // Capture vector search as a retrieval span
+  const t0 = Date.now();
+  const docs = await vectorDB.search(query, { topK: 5 });
+  span({
+    type: 'retrieval',       // Shows with a blue badge in dashboard
+    name: 'vector-search',   // Descriptive name — not "search" or "step-1"
+    input: { query, topK: 5 },
+    output: { count: docs.length },
+    durationMs: Date.now() - t0,
+  });
+
+  // LLM call is captured automatically as a child
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [
+      { role: 'system', content: 'Answer based on the provided context.' },
+      { role: 'user', content: `Context: ${docs.join('\n')}\n\nQuestion: ${query}` },
+    ],
+  });
+
+  return response.choices[0].message.content;
+});
+```
+
+**In the dashboard:**
+```
+▼ rag-pipeline (trace)              2.4s  $0.005
+    ▼ vector-search (retrieval)     0.3s
+    ▼ gpt-4 (llm)                   2.1s  $0.005  580 tokens
+```
+
+**Available span types:** `retrieval`, `embedding`, `tool`, `guardrail`, `rerank`, `custom`
+
+### 4. Use descriptive names
+
+Names are the first thing you see in the dashboard. Good names make traces scannable; bad names make them useless.
+
+```typescript
+// ❌ Bad — these all look the same in the dashboard
+await trace('process', async () => { ... });
+await trace('handle', async () => { ... });
+span({ type: 'tool', name: 'function' });
+
+// ✅ Good — you can immediately understand what happened
+await trace('sales-agent', async () => { ... });
+await trace('summarize-document', async () => { ... });
+span({ type: 'tool', name: 'get-weather-forecast' });
+```
+
+### Full example: AI agent with everything wired up
+
+Here's a complete example combining all the best practices — this is what we recommend as the starting point for any production app:
+
+```typescript
+import { init, observe, trace, span, flush } from '@lelemondev/sdk/openai';
+import OpenAI from 'openai';
+
+// 1. Initialize once at app startup
+init({ apiKey: process.env.LELEMON_API_KEY });
+
+async function handleChat(userId: string, sessionId: string, message: string) {
+  // 2. Wrap client with user context
+  const openai = observe(new OpenAI(), { userId, sessionId });
+
+  // 3. Wrap the full workflow in a named trace
+  const result = await trace('customer-support-agent', async () => {
+    // 4. Capture non-LLM operations as typed spans
+    const t0 = Date.now();
+    const history = await db.getChatHistory(sessionId);
+    span({
+      type: 'retrieval',
+      name: 'load-chat-history',
+      input: { sessionId },
+      output: { messageCount: history.length },
+      durationMs: Date.now() - t0,
+    });
+
+    // 5. LLM call is automatically captured as a child span
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [
+        { role: 'system', content: 'You are a helpful customer support agent.' },
+        ...history,
+        { role: 'user', content: message },
+      ],
+    });
+
+    return response.choices[0].message.content;
+  });
+
+  return result;
+}
+
+// In your server:
+app.post('/chat', async (req, res) => {
+  const { message, conversationId } = req.body;
+  const answer = await handleChat(req.user.id, conversationId, message);
+  res.json({ answer });
+});
+```
+
+**In the dashboard, each request renders as:**
+```
+▼ customer-support-agent (trace)    1.8s  $0.004  user: user-123  session: conv-abc
+    ▼ load-chat-history (retrieval) 0.1s
+    ▼ gpt-4 (llm)                   1.7s  $0.004  420 tokens
+```
+
+And because you set `sessionId`, all turns of the same conversation are grouped together — you can click into a session and see the entire conversation flow.
 
 ### Provider-Specific Imports
 
