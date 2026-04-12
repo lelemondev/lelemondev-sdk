@@ -56,8 +56,20 @@ export interface TraceContext {
   sessionId?: string;
   /** User ID for filtering by user */
   userId?: string;
+  /** Visual styling options */
+  style?: StyleOptions;
   /** Map of toolCallId → llmSpanId for linking tool spans to their parent LLM */
   pendingToolCalls: Map<string, string>;
+}
+
+/** Visual styling options for traces and spans in the Lelemon dashboard */
+export interface StyleOptions {
+  /** Hex color for the trace/span (e.g., '#22c55e') */
+  color?: string;
+  /** Emoji or icon name displayed next to the name (e.g., '🛒', '🤖', '🔍') */
+  icon?: string;
+  /** Short label shown as a badge (e.g., 'Sales', 'Support', 'RAG') */
+  label?: string;
 }
 
 export interface TraceOptions {
@@ -69,6 +81,8 @@ export interface TraceOptions {
   metadata?: Record<string, unknown>;
   /** Tags for filtering */
   tags?: string[];
+  /** Visual styling in the dashboard */
+  style?: StyleOptions;
   /**
    * Key to extract from result object for cleaner output display.
    * If not specified, auto-detection tries: text, content, message, output, response, result, answer.
@@ -132,6 +146,8 @@ export interface SpanOptions {
   toolCallId?: string;
   /** Custom metadata */
   metadata?: Record<string, unknown>;
+  /** Visual styling in the dashboard */
+  style?: StyleOptions;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -296,6 +312,7 @@ export async function trace<T>(
     outputTransform: options.outputTransform,
     sessionId: options.sessionId,
     userId: options.userId,
+    style: options.style,
     pendingToolCalls: new Map(),
   };
 
@@ -405,6 +422,7 @@ function sendRootSpan(context: TraceContext, result?: unknown, error?: Error): v
     metadata: {
       ...globalContext.metadata,
       ...context.metadata,
+      ...(context.style ? { _style: context.style } : {}),
     },
     tags: context.tags ?? globalContext.tags,
   };
@@ -474,6 +492,7 @@ export function span(options: SpanOptions): void {
       ...options.metadata,
       _traceId: context.traceId,
       _parentSpanId: parentSpanId,
+      ...(options.style ? { _style: options.style } : {}),
     },
   });
 

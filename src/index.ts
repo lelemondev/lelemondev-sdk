@@ -59,4 +59,4 @@ export type {
   CaptureSpanOptions,
 } from './core/types';
 
-export type { TraceContext, TraceOptions, SpanOptions } from './core/context';
+export type { TraceContext, TraceOptions, SpanOptions, StyleOptions } from './core/context';
