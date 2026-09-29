@@ -21,7 +21,6 @@
 
 import { AsyncLocalStorage } from 'async_hooks';
 import { getTransport } from './config';
-import { getGlobalContext } from './capture';
 import { debug } from './logger';
 import type { CreateTraceRequest, SpanType } from './types';
 
@@ -395,7 +394,6 @@ function sendRootSpan(context: TraceContext, result?: unknown, error?: Error): v
     return;
   }
 
-  const globalContext = getGlobalContext();
   const durationMs = Date.now() - context.startTime;
 
   // Extract clean output for display
@@ -417,14 +415,13 @@ function sendRootSpan(context: TraceContext, result?: unknown, error?: Error): v
     status: error ? 'error' : 'success',
     errorMessage: error?.message,
     streaming: false,
-    sessionId: context.sessionId ?? globalContext.sessionId,
-    userId: context.userId ?? globalContext.userId,
+    sessionId: context.sessionId,
+    userId: context.userId,
     metadata: {
-      ...globalContext.metadata,
       ...context.metadata,
       ...(context.style ? { _style: context.style } : {}),
     },
-    tags: context.tags ?? globalContext.tags,
+    tags: context.tags,
   };
 
   debug(`Sending root span: ${context.name}`, { durationMs, hasError: !!error });

@@ -6,7 +6,7 @@
  * Server smart: extracts tokens, output, tools, etc.
  */
 
-import type { ProviderName } from '../core/types';
+import type { ProviderName, ObserveOptions } from '../core/types';
 import { captureTrace, captureError } from '../core/capture';
 import { registerToolCalls } from '../core/context';
 
@@ -78,29 +78,29 @@ export function canHandle(client: unknown): boolean {
   return !!(c.messages && typeof c.messages === 'object');
 }
 
-export function wrap(client: unknown): unknown {
+export function wrap(client: unknown, context?: ObserveOptions): unknown {
   const anthropicClient = client as AnthropicClient;
   return new Proxy(anthropicClient, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'messages' && value && typeof value === 'object') {
-        return wrapMessagesNamespace(value as AnthropicClient['messages']);
+        return wrapMessagesNamespace(value as AnthropicClient['messages'], context);
       }
       return value;
     },
   });
 }
 
-function wrapMessagesNamespace(messages: AnthropicClient['messages']) {
+function wrapMessagesNamespace(messages: AnthropicClient['messages'], context?: ObserveOptions) {
   if (!messages) return messages;
   return new Proxy(messages, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return wrapMessagesCreate(value.bind(target));
+        return wrapMessagesCreate(value.bind(target), context);
       }
       if (prop === 'stream' && typeof value === 'function') {
-        return wrapMessagesStream(value.bind(target));
+        return wrapMessagesStream(value.bind(target), context);
       }
       return value;
     },
@@ -111,7 +111,7 @@ function wrapMessagesNamespace(messages: AnthropicClient['messages']) {
 // Non-Streaming
 // ─────────────────────────────────────────────────────────────
 
-export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
+export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<unknown>, context?: ObserveOptions) {
   return async function wrappedMessagesCreate(...args: unknown[]): Promise<unknown> {
     const startTime = Date.now();
     const request = (args[0] || {}) as MessageRequest;
@@ -121,7 +121,7 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
       const response = await originalFn(...args);
 
       if (isStreaming && isAsyncIterable(response)) {
-        return wrapStreamResponse(response, request, startTime);
+        return wrapStreamResponse(response, request, startTime, context);
       }
 
       // Non-streaming: send raw response to server
@@ -136,6 +136,7 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
         durationMs,
         status: 'success',
         streaming: false,
+        context,
       });
 
       // Register tool calls for hierarchy (extract IDs only)
@@ -156,6 +157,7 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs,
         streaming: isStreaming,
+        context,
       });
       throw error;
     }
@@ -166,7 +168,7 @@ export function wrapMessagesCreate(originalFn: (...args: unknown[]) => Promise<u
 // Streaming
 // ─────────────────────────────────────────────────────────────
 
-export function wrapMessagesStream(originalFn: (...args: unknown[]) => unknown) {
+export function wrapMessagesStream(originalFn: (...args: unknown[]) => unknown, context?: ObserveOptions) {
   return function wrappedMessagesStream(...args: unknown[]): unknown {
     const startTime = Date.now();
     const request = (args[0] || {}) as MessageRequest;
@@ -174,7 +176,7 @@ export function wrapMessagesStream(originalFn: (...args: unknown[]) => unknown) 
     try {
       const stream = originalFn(...args);
       if (stream && typeof stream === 'object') {
-        return wrapAnthropicStream(stream, request, startTime);
+        return wrapAnthropicStream(stream, request, startTime, context);
       }
       return stream;
     } catch (error) {
@@ -186,6 +188,7 @@ export function wrapMessagesStream(originalFn: (...args: unknown[]) => unknown) 
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs,
         streaming: true,
+        context,
       });
       throw error;
     }
@@ -200,7 +203,8 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
 function wrapAnthropicStream(
   stream: unknown,
   request: MessageRequest,
-  startTime: number
+  startTime: number,
+  context?: ObserveOptions
 ): unknown {
   const originalStream = stream as {
     [Symbol.asyncIterator]?: () => AsyncIterator<StreamEvent>;
@@ -311,6 +315,7 @@ function wrapAnthropicStream(
           error: error instanceof Error ? error : new Error(String(error)),
           durationMs,
           streaming: true,
+          context,
         });
       }
       throw error;
@@ -331,6 +336,7 @@ function wrapAnthropicStream(
           status: 'success',
           streaming: true,
           firstTokenMs,
+          context,
         });
 
         // Register tool calls
@@ -357,7 +363,8 @@ function wrapAnthropicStream(
 async function* wrapStreamResponse(
   stream: AsyncIterable<unknown>,
   request: MessageRequest,
-  startTime: number
+  startTime: number,
+  context?: ObserveOptions
 ): AsyncIterable<unknown> {
   const finalResponse: MessageResponse = {
     content: [],
@@ -454,6 +461,7 @@ async function* wrapStreamResponse(
         error,
         durationMs,
         streaming: true,
+        context,
       });
     } else {
       const spanId = captureTrace({
@@ -465,6 +473,7 @@ async function* wrapStreamResponse(
         status: 'success',
         streaming: true,
         firstTokenMs,
+        context,
       });
 
       if (spanId && finalResponse.content) {

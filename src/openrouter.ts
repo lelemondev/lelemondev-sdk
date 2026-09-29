@@ -38,7 +38,6 @@ export type { TraceContext, TraceOptions, SpanOptions } from './core/context';
 
 // Provider-specific observe
 import * as openrouter from './providers/openrouter';
-import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
 import { clientWrapped, warn, debug } from './core/logger';
@@ -47,10 +46,6 @@ import { clientWrapped, warn, debug } from './core/logger';
  * Wrap an OpenRouter client (OpenAI SDK with OpenRouter baseURL) with automatic tracing
  */
 export function observe<T>(client: T, options?: ObserveOptions): T {
-  if (options) {
-    setGlobalContext(options);
-  }
-
   const config = getConfig();
   if (config.disabled) {
     debug('Tracing disabled, returning unwrapped client');
@@ -63,5 +58,5 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   }
 
   clientWrapped('openrouter');
-  return openrouter.wrap(client) as T;
+  return openrouter.wrap(client, options) as T;
 }

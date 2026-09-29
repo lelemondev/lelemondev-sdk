@@ -763,7 +763,7 @@ await trace('rag-pipeline', async () => {
 
 ### `captureSpan(options)`
 
-Lower-level API for manual span capture. Works both inside and outside `trace()` blocks.
+Lower-level API for manual span capture. Works both inside and outside `trace()` blocks. Inside a trace the span takes the trace's session and user; outside one, pass them in `context`.
 
 ```typescript
 import { captureSpan } from '@lelemondev/sdk/openai';
@@ -775,6 +775,7 @@ captureSpan({
   output: { temperature: 72, conditions: 'sunny' },
   durationMs: 150,
   status: 'success', // or 'error'
+  context: { sessionId: 'conversation-abc', userId: 'user-123' }, // only needed outside trace()
 });
 ```
 

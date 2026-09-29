@@ -30,7 +30,6 @@ export type { TraceContext, TraceOptions, SpanOptions } from './core/context';
 
 // Provider-specific observe
 import * as openai from './providers/openai';
-import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
 import { clientWrapped, warn, debug } from './core/logger';
@@ -39,10 +38,6 @@ import { clientWrapped, warn, debug } from './core/logger';
  * Wrap an OpenAI client with automatic tracing
  */
 export function observe<T>(client: T, options?: ObserveOptions): T {
-  if (options) {
-    setGlobalContext(options);
-  }
-
   const config = getConfig();
   if (config.disabled) {
     debug('Tracing disabled, returning unwrapped client');
@@ -55,7 +50,7 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   }
 
   clientWrapped('openai');
-  return wrapOpenAI(client) as T;
+  return wrapOpenAI(client, options) as T;
 }
 
 // OpenAI wrapper implementation
@@ -66,7 +61,7 @@ interface OpenAIShape {
   embeddings?: { create: CallableFunction };
 }
 
-function wrapOpenAI(client: unknown): unknown {
+function wrapOpenAI(client: unknown, context?: ObserveOptions): unknown {
   const typed = client as OpenAIShape;
 
   return new Proxy(typed, {
@@ -74,19 +69,19 @@ function wrapOpenAI(client: unknown): unknown {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'chat' && value && typeof value === 'object') {
-        return wrapOpenAIChat(value as OpenAIShape['chat']);
+        return wrapOpenAIChat(value as OpenAIShape['chat'], context);
       }
 
       if (prop === 'responses' && value && typeof value === 'object') {
-        return wrapOpenAIResponses(value as OpenAIShape['responses']);
+        return wrapOpenAIResponses(value as OpenAIShape['responses'], context);
       }
 
       if (prop === 'completions' && value && typeof value === 'object') {
-        return wrapOpenAICompletions(value as OpenAIShape['completions']);
+        return wrapOpenAICompletions(value as OpenAIShape['completions'], context);
       }
 
       if (prop === 'embeddings' && value && typeof value === 'object') {
-        return wrapOpenAIEmbeddings(value as OpenAIShape['embeddings']);
+        return wrapOpenAIEmbeddings(value as OpenAIShape['embeddings'], context);
       }
 
       return value;
@@ -94,60 +89,60 @@ function wrapOpenAI(client: unknown): unknown {
   });
 }
 
-function wrapOpenAIChat(chat: OpenAIShape['chat']) {
+function wrapOpenAIChat(chat: OpenAIShape['chat'], context?: ObserveOptions) {
   return new Proxy(chat!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'completions' && value && typeof value === 'object') {
-        return wrapOpenAIChatCompletions(value as { create: CallableFunction });
+        return wrapOpenAIChatCompletions(value as { create: CallableFunction }, context);
       }
       return value;
     },
   });
 }
 
-function wrapOpenAIChatCompletions(completions: { create: CallableFunction }) {
+function wrapOpenAIChatCompletions(completions: { create: CallableFunction }, context?: ObserveOptions) {
   return new Proxy(completions, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return openai.wrapChatCreate(value.bind(target));
+        return openai.wrapChatCreate(value.bind(target), context);
       }
       return value;
     },
   });
 }
 
-function wrapOpenAIResponses(responses: OpenAIShape['responses']) {
+function wrapOpenAIResponses(responses: OpenAIShape['responses'], context?: ObserveOptions) {
   return new Proxy(responses!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return openai.wrapResponsesCreate(value.bind(target));
+        return openai.wrapResponsesCreate(value.bind(target), context);
       }
       return value;
     },
   });
 }
 
-function wrapOpenAICompletions(completions: OpenAIShape['completions']) {
+function wrapOpenAICompletions(completions: OpenAIShape['completions'], context?: ObserveOptions) {
   return new Proxy(completions!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return openai.wrapCompletionCreate(value.bind(target));
+        return openai.wrapCompletionCreate(value.bind(target), context);
       }
       return value;
     },
   });
 }
 
-function wrapOpenAIEmbeddings(embeddings: OpenAIShape['embeddings']) {
+function wrapOpenAIEmbeddings(embeddings: OpenAIShape['embeddings'], context?: ObserveOptions) {
   return new Proxy(embeddings!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return openai.wrapEmbeddingsCreate(value.bind(target));
+        return openai.wrapEmbeddingsCreate(value.bind(target), context);
       }
       return value;
     },

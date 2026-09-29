@@ -6,7 +6,7 @@
  * Server smart: extracts tokens, output, tools, etc.
  */
 
-import type { ProviderName } from '../core/types';
+import type { ProviderName, ObserveOptions } from '../core/types';
 import { captureTrace, captureError } from '../core/capture';
 import { registerToolCalls } from '../core/context';
 
@@ -101,31 +101,31 @@ export function canHandle(client: unknown): boolean {
   return 'region' in (c.config as Record<string, unknown>);
 }
 
-export function wrap(client: unknown): unknown {
+export function wrap(client: unknown, context?: ObserveOptions): unknown {
   const bedrockClient = client as BedrockClient;
   return new Proxy(bedrockClient, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'send' && typeof value === 'function') {
-        return wrapSend(value.bind(target));
+        return wrapSend(value.bind(target), context);
       }
       return value;
     },
   });
 }
 
-function wrapSend(originalSend: (cmd: BedrockCommand) => Promise<unknown>) {
+function wrapSend(originalSend: (cmd: BedrockCommand) => Promise<unknown>, context?: ObserveOptions) {
   return async function tracedSend(command: BedrockCommand): Promise<unknown> {
     const commandName = command.constructor?.name || '';
     switch (commandName) {
       case 'ConverseCommand':
-        return handleConverse(originalSend, command);
+        return handleConverse(originalSend, command, context);
       case 'ConverseStreamCommand':
-        return handleConverseStream(originalSend, command);
+        return handleConverseStream(originalSend, command, context);
       case 'InvokeModelCommand':
-        return handleInvokeModel(originalSend, command);
+        return handleInvokeModel(originalSend, command, context);
       case 'InvokeModelWithResponseStreamCommand':
-        return handleInvokeModelStream(originalSend, command);
+        return handleInvokeModelStream(originalSend, command, context);
       default:
         return originalSend(command);
     }
@@ -138,7 +138,8 @@ function wrapSend(originalSend: (cmd: BedrockCommand) => Promise<unknown>) {
 
 async function handleConverse(
   send: (cmd: BedrockCommand) => Promise<unknown>,
-  command: BedrockCommand
+  command: BedrockCommand,
+  context?: ObserveOptions
 ): Promise<unknown> {
   const startTime = Date.now();
   const input = command.input as ConverseInput;
@@ -155,6 +156,7 @@ async function handleConverse(
       durationMs,
       status: 'success',
       streaming: false,
+      context,
     });
 
     // Register tool calls for hierarchy
@@ -174,6 +176,7 @@ async function handleConverse(
       error: error instanceof Error ? error : new Error(String(error)),
       durationMs: Date.now() - startTime,
       streaming: false,
+      context,
     });
     throw error;
   }
@@ -181,7 +184,8 @@ async function handleConverse(
 
 async function handleConverseStream(
   send: (cmd: BedrockCommand) => Promise<unknown>,
-  command: BedrockCommand
+  command: BedrockCommand,
+  context?: ObserveOptions
 ): Promise<unknown> {
   const startTime = Date.now();
   const input = command.input as ConverseInput;
@@ -191,7 +195,7 @@ async function handleConverseStream(
     if (response.stream) {
       return {
         ...response,
-        stream: wrapConverseStream(response.stream, input, startTime),
+        stream: wrapConverseStream(response.stream, input, startTime, context),
       };
     }
     return response;
@@ -203,6 +207,7 @@ async function handleConverseStream(
       error: error instanceof Error ? error : new Error(String(error)),
       durationMs: Date.now() - startTime,
       streaming: true,
+      context,
     });
     throw error;
   }
@@ -211,7 +216,8 @@ async function handleConverseStream(
 async function* wrapConverseStream(
   stream: AsyncIterable<ConverseStreamEvent>,
   input: ConverseInput,
-  startTime: number
+  startTime: number,
+  context?: ObserveOptions
 ): AsyncIterable<ConverseStreamEvent> {
   // Reconstruct response object
   const finalResponse: ConverseResponse = {
@@ -308,6 +314,7 @@ async function* wrapConverseStream(
         error,
         durationMs,
         streaming: true,
+        context,
       });
     } else {
       const spanId = captureTrace({
@@ -319,6 +326,7 @@ async function* wrapConverseStream(
         status: 'success',
         streaming: true,
         firstTokenMs,
+        context,
       });
 
       if (spanId) {
@@ -337,7 +345,8 @@ async function* wrapConverseStream(
 
 async function handleInvokeModel(
   send: (cmd: BedrockCommand) => Promise<unknown>,
-  command: BedrockCommand
+  command: BedrockCommand,
+  context?: ObserveOptions
 ): Promise<unknown> {
   const startTime = Date.now();
   const input = command.input as InvokeModelInput;
@@ -355,6 +364,7 @@ async function handleInvokeModel(
       durationMs,
       status: 'success',
       streaming: false,
+      context,
     });
 
     return response;
@@ -366,6 +376,7 @@ async function handleInvokeModel(
       error: error instanceof Error ? error : new Error(String(error)),
       durationMs: Date.now() - startTime,
       streaming: false,
+      context,
     });
     throw error;
   }
@@ -373,7 +384,8 @@ async function handleInvokeModel(
 
 async function handleInvokeModelStream(
   send: (cmd: BedrockCommand) => Promise<unknown>,
-  command: BedrockCommand
+  command: BedrockCommand,
+  context?: ObserveOptions
 ): Promise<unknown> {
   const startTime = Date.now();
   const input = command.input as InvokeModelInput;
@@ -383,7 +395,7 @@ async function handleInvokeModelStream(
     if (response.body) {
       return {
         ...response,
-        body: wrapInvokeModelStream(response.body, input, startTime),
+        body: wrapInvokeModelStream(response.body, input, startTime, context),
       };
     }
     return response;
@@ -395,6 +407,7 @@ async function handleInvokeModelStream(
       error: error instanceof Error ? error : new Error(String(error)),
       durationMs: Date.now() - startTime,
       streaming: true,
+      context,
     });
     throw error;
   }
@@ -403,7 +416,8 @@ async function handleInvokeModelStream(
 async function* wrapInvokeModelStream(
   stream: AsyncIterable<{ chunk?: { bytes?: Uint8Array } }>,
   input: InvokeModelInput,
-  startTime: number
+  startTime: number,
+  context?: ObserveOptions
 ): AsyncIterable<{ chunk?: { bytes?: Uint8Array } }> {
   // Accumulate all chunks to build response
   const allChunks: unknown[] = [];
@@ -431,6 +445,7 @@ async function* wrapInvokeModelStream(
         error,
         durationMs,
         streaming: true,
+        context,
       });
     } else {
       // Build accumulated response for server to parse
@@ -442,6 +457,7 @@ async function* wrapInvokeModelStream(
         durationMs,
         status: 'success',
         streaming: true,
+        context,
       });
     }
   }
