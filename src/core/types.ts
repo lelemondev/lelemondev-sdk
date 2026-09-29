@@ -233,4 +233,6 @@ export interface CaptureSpanOptions {
   toolCallId?: string;
   /** Custom metadata */
   metadata?: Record<string, unknown>;
+  /** Session, user, metadata and tags for a span captured outside trace() */
+  context?: ObserveOptions;
 }

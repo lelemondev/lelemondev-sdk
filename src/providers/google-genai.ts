@@ -13,7 +13,7 @@
  *   chat.sendMessage({ message }) / chat.sendMessageStream({ message })
  */
 
-import type { ProviderName } from '../core/types';
+import type { ProviderName, ObserveOptions } from '../core/types';
 import { captureTrace, captureError } from '../core/capture';
 import { registerToolCalls } from '../core/context';
 
@@ -122,7 +122,7 @@ export function canHandle(client: unknown): boolean {
   return false;
 }
 
-export function wrap(client: unknown): unknown {
+export function wrap(client: unknown, context?: ObserveOptions): unknown {
   const genaiClient = client as GoogleGenAIClient;
 
   return new Proxy(genaiClient, {
@@ -130,11 +130,11 @@ export function wrap(client: unknown): unknown {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'models' && value && typeof value === 'object') {
-        return wrapModels(value as ModelsNamespace);
+        return wrapModels(value as ModelsNamespace, context);
       }
 
       if (prop === 'chats' && value && typeof value === 'object') {
-        return wrapChats(value as ChatsNamespace);
+        return wrapChats(value as ChatsNamespace, context);
       }
 
       return value;
@@ -146,17 +146,17 @@ export function wrap(client: unknown): unknown {
 // Models namespace wrapping
 // ─────────────────────────────────────────────────────────────
 
-function wrapModels(models: ModelsNamespace): ModelsNamespace {
+function wrapModels(models: ModelsNamespace, context?: ObserveOptions): ModelsNamespace {
   return new Proxy(models, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'generateContent' && typeof value === 'function') {
-        return wrapGenerateContent(value.bind(target));
+        return wrapGenerateContent(value.bind(target), context);
       }
 
       if (prop === 'generateContentStream' && typeof value === 'function') {
-        return wrapGenerateContentStream(value.bind(target));
+        return wrapGenerateContentStream(value.bind(target), context);
       }
 
       return value;
@@ -165,7 +165,8 @@ function wrapModels(models: ModelsNamespace): ModelsNamespace {
 }
 
 function wrapGenerateContent(
-  originalFn: (params: GenerateContentParams) => Promise<GenerateContentResponse>
+  originalFn: (params: GenerateContentParams) => Promise<GenerateContentResponse>,
+  context?: ObserveOptions
 ) {
   return async function wrappedGenerateContent(
     params: GenerateContentParams
@@ -188,6 +189,7 @@ function wrapGenerateContent(
         durationMs,
         status: 'success',
         streaming: false,
+        context,
       });
 
       // Register function calls for hierarchy
@@ -207,6 +209,7 @@ function wrapGenerateContent(
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs: Date.now() - startTime,
         streaming: false,
+        context,
       });
       throw error;
     }
@@ -218,7 +221,8 @@ function wrapGenerateContent(
 // ─────────────────────────────────────────────────────────────
 
 function wrapGenerateContentStream(
-  originalFn: (params: GenerateContentParams) => Promise<AsyncIterable<GenerateContentStreamChunk>>
+  originalFn: (params: GenerateContentParams) => Promise<AsyncIterable<GenerateContentStreamChunk>>,
+  context?: ObserveOptions
 ) {
   return async function wrappedGenerateContentStream(
     params: GenerateContentParams
@@ -229,7 +233,7 @@ function wrapGenerateContentStream(
 
     try {
       const stream = await originalFn(params);
-      return wrapStream(stream, model, input, startTime);
+      return wrapStream(stream, model, input, startTime, context);
     } catch (error) {
       captureError({
         provider: PROVIDER_NAME,
@@ -238,6 +242,7 @@ function wrapGenerateContentStream(
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs: Date.now() - startTime,
         streaming: true,
+        context,
       });
       throw error;
     }
@@ -248,7 +253,8 @@ async function* wrapStream(
   stream: AsyncIterable<GenerateContentStreamChunk>,
   modelName: string,
   input: unknown,
-  startTime: number
+  startTime: number,
+  context?: ObserveOptions
 ): AsyncIterable<GenerateContentStreamChunk> {
   const finalResponse: {
     candidates: Candidate[];
@@ -309,6 +315,7 @@ async function* wrapStream(
         error,
         durationMs,
         streaming: true,
+        context,
       });
     } else {
       const spanId = captureTrace({
@@ -320,6 +327,7 @@ async function* wrapStream(
         status: 'success',
         streaming: true,
         firstTokenMs,
+        context,
       });
 
       if (spanId) {
@@ -336,13 +344,13 @@ async function* wrapStream(
 // Chats namespace wrapping
 // ─────────────────────────────────────────────────────────────
 
-function wrapChats(chats: ChatsNamespace): ChatsNamespace {
+function wrapChats(chats: ChatsNamespace, context?: ObserveOptions): ChatsNamespace {
   return new Proxy(chats, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return wrapChatsCreate(value.bind(target));
+        return wrapChatsCreate(value.bind(target), context);
       }
 
       return value;
@@ -351,25 +359,26 @@ function wrapChats(chats: ChatsNamespace): ChatsNamespace {
 }
 
 function wrapChatsCreate(
-  originalFn: (params: ChatCreateParams) => Chat
+  originalFn: (params: ChatCreateParams) => Chat,
+  context?: ObserveOptions
 ): (params: ChatCreateParams) => Chat {
   return function wrappedChatsCreate(params: ChatCreateParams): Chat {
     const chat = originalFn(params);
-    return wrapChat(chat, params.model);
+    return wrapChat(chat, params.model, context);
   };
 }
 
-function wrapChat(chat: Chat, modelName: string): Chat {
+function wrapChat(chat: Chat, modelName: string, context?: ObserveOptions): Chat {
   return new Proxy(chat, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'sendMessage' && typeof value === 'function') {
-        return wrapChatSendMessage(value.bind(target), modelName);
+        return wrapChatSendMessage(value.bind(target), modelName, context);
       }
 
       if (prop === 'sendMessageStream' && typeof value === 'function') {
-        return wrapChatSendMessageStream(value.bind(target), modelName);
+        return wrapChatSendMessageStream(value.bind(target), modelName, context);
       }
 
       return value;
@@ -379,7 +388,8 @@ function wrapChat(chat: Chat, modelName: string): Chat {
 
 function wrapChatSendMessage(
   originalFn: (params: ChatSendMessageParams) => Promise<GenerateContentResponse>,
-  modelName: string
+  modelName: string,
+  context?: ObserveOptions
 ) {
   return async function wrappedChatSendMessage(
     params: ChatSendMessageParams
@@ -400,6 +410,7 @@ function wrapChatSendMessage(
         durationMs,
         status: 'success',
         streaming: false,
+        context,
       });
 
       if (spanId) {
@@ -418,6 +429,7 @@ function wrapChatSendMessage(
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs: Date.now() - startTime,
         streaming: false,
+        context,
       });
       throw error;
     }
@@ -426,7 +438,8 @@ function wrapChatSendMessage(
 
 function wrapChatSendMessageStream(
   originalFn: (params: ChatSendMessageParams) => Promise<AsyncIterable<GenerateContentStreamChunk>>,
-  modelName: string
+  modelName: string,
+  context?: ObserveOptions
 ) {
   return async function wrappedChatSendMessageStream(
     params: ChatSendMessageParams
@@ -436,7 +449,7 @@ function wrapChatSendMessageStream(
 
     try {
       const stream = await originalFn(params);
-      return wrapStream(stream, modelName, input, startTime);
+      return wrapStream(stream, modelName, input, startTime, context);
     } catch (error) {
       captureError({
         provider: PROVIDER_NAME,
@@ -445,6 +458,7 @@ function wrapChatSendMessageStream(
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs: Date.now() - startTime,
         streaming: true,
+        context,
       });
       throw error;
     }

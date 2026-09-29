@@ -3,12 +3,17 @@ import { observe } from '../../src/observe';
 import {
   createMockBedrockClient,
   createConverseCommand,
+  createConverseStreamCommand,
   createMockOpenAIClient,
   createMockAnthropicClient,
   createMockGeminiClient,
+  createMockGoogleGenAIClient,
 } from '../helpers/mock-client';
-import { createConverseResponse } from '../fixtures/bedrock';
+import { createConverseResponse, createConverseStream } from '../fixtures/bedrock';
 import { createGenerateContentResult } from '../fixtures/gemini';
+import { createChatCompletionResponse } from '../fixtures/openai';
+import { createMessageResponse } from '../fixtures/anthropic';
+import { createGenAIGenerateContentResponse } from '../fixtures/google-genai';
 
 // Mock config module
 vi.mock('../../src/core/config', () => ({
@@ -58,22 +63,68 @@ describe('observe() Integration', () => {
       );
     });
 
-    it('should apply observe options to global context', () => {
-      const client = createMockBedrockClient();
+    it('binds observe options to the client it returns, not to the process', async () => {
+      const sendA = vi.fn().mockResolvedValue(createConverseResponse());
+      const sendB = vi.fn().mockResolvedValue(createConverseResponse());
+      const contextA = { sessionId: 'session-a', userId: 'user-a', metadata: { org: 'a' }, tags: ['a'] };
+      const contextB = { sessionId: 'session-b', userId: 'user-b', metadata: { org: 'b' }, tags: ['b'] };
 
-      observe(client, {
-        sessionId: 'session-123',
-        userId: 'user-456',
-        metadata: { feature: 'chat' },
-        tags: ['production'],
-      });
+      const tracedA = observe(createMockBedrockClient(sendA), contextA);
+      observe(createMockBedrockClient(sendB), contextB);
 
-      expect(mockSetGlobalContext).toHaveBeenCalledWith({
-        sessionId: 'session-123',
-        userId: 'user-456',
-        metadata: { feature: 'chat' },
-        tags: ['production'],
-      });
+      await (tracedA as ReturnType<typeof createMockBedrockClient>).send(
+        createConverseCommand({ modelId: 'model-a', messages: [] })
+      );
+
+      expect(mockCaptureTrace).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'model-a', context: contextA })
+      );
+    });
+
+    it('carries the client context on errors too', async () => {
+      const send = vi.fn().mockRejectedValue(new Error('boom'));
+      const context = { sessionId: 'session-a', tags: ['a'] };
+
+      const traced = observe(createMockBedrockClient(send), context);
+      observe(createMockBedrockClient(), { sessionId: 'session-b', tags: ['b'] });
+
+      await expect(
+        (traced as ReturnType<typeof createMockBedrockClient>).send(
+          createConverseCommand({ modelId: 'model-a', messages: [] })
+        )
+      ).rejects.toThrow('boom');
+
+      expect(mockCaptureError).toHaveBeenCalledWith(expect.objectContaining({ context }));
+    });
+
+    it('a stream consumed after another client was observed keeps its own context', async () => {
+      const send = vi.fn().mockResolvedValue({ stream: createConverseStream('Hello') });
+      const context = { sessionId: 'session-a', tags: ['a'] };
+
+      const traced = observe(createMockBedrockClient(send), context);
+      const response = (await (traced as ReturnType<typeof createMockBedrockClient>).send(
+        createConverseStreamCommand({ modelId: 'model-a', messages: [] })
+      )) as { stream: AsyncIterable<unknown> };
+      observe(createMockBedrockClient(), { sessionId: 'session-b', tags: ['b'] });
+      for await (const _event of response.stream) {
+        void _event;
+      }
+
+      expect(mockCaptureTrace).toHaveBeenCalledWith(expect.objectContaining({ context }));
+    });
+
+    it('a client observed without options carries no context', async () => {
+      const send = vi.fn().mockResolvedValue(createConverseResponse());
+
+      observe(createMockBedrockClient(), { sessionId: 'session-b', tags: ['b'] });
+      const traced = observe(createMockBedrockClient(send));
+
+      await (traced as ReturnType<typeof createMockBedrockClient>).send(
+        createConverseCommand({ modelId: 'model-a', messages: [] })
+      );
+
+      const [params] = mockCaptureTrace.mock.calls[0] as [{ context?: unknown }];
+      expect(params.context ?? {}).toEqual({});
     });
   });
 
@@ -97,6 +148,73 @@ describe('observe() Integration', () => {
           model: 'gemini-2.5-flash',
         })
       );
+    });
+
+    it('the context reaches models created from the observed client', async () => {
+      const client = createMockGeminiClient(vi.fn().mockResolvedValue(createGenerateContentResult()));
+      const context = { sessionId: 'session-a', tags: ['a'] };
+
+      const traced = observe(client, context);
+      observe(createMockGeminiClient(), { sessionId: 'session-b', tags: ['b'] });
+      await (traced as typeof client).getGenerativeModel({ model: 'gemini-2.5-flash' }).generateContent('Hello');
+
+      expect(mockCaptureTrace).toHaveBeenCalledWith(expect.objectContaining({ context }));
+    });
+  });
+
+  describe('with OpenAI client', () => {
+    it('the context reaches the client it was bound to, not a later observe() call', async () => {
+      const client = createMockOpenAIClient();
+      (client.chat.completions.create as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createChatCompletionResponse()
+      );
+      const context = { sessionId: 'session-a', tags: ['a'] };
+
+      const traced = observe(client, context);
+      observe(createMockOpenAIClient(), { sessionId: 'session-b', tags: ['b'] });
+
+      await (traced as typeof client).chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+
+      expect(mockCaptureTrace).toHaveBeenCalledWith(expect.objectContaining({ context }));
+    });
+  });
+
+  describe('with Anthropic client', () => {
+    it('the context reaches the client it was bound to, not a later observe() call', async () => {
+      const client = createMockAnthropicClient();
+      (client.messages.create as ReturnType<typeof vi.fn>).mockResolvedValue(createMessageResponse());
+      const context = { sessionId: 'session-a', tags: ['a'] };
+
+      const traced = observe(client, context);
+      observe(createMockAnthropicClient(), { sessionId: 'session-b', tags: ['b'] });
+
+      await (traced as typeof client).messages.create({
+        model: 'claude-3-haiku-20240307',
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+
+      expect(mockCaptureTrace).toHaveBeenCalledWith(expect.objectContaining({ context }));
+    });
+  });
+
+  describe('with Google GenAI client', () => {
+    it('the context reaches the client it was bound to, not a later observe() call', async () => {
+      const generateContent = vi.fn().mockResolvedValue(createGenAIGenerateContentResponse());
+      const client = createMockGoogleGenAIClient({ generateContent });
+      const context = { sessionId: 'session-a', tags: ['a'] };
+
+      const traced = observe(client, context);
+      observe(createMockGoogleGenAIClient(), { sessionId: 'session-b', tags: ['b'] });
+
+      await (traced as typeof client).models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: 'Hello',
+      });
+
+      expect(mockCaptureTrace).toHaveBeenCalledWith(expect.objectContaining({ context }));
     });
   });
 

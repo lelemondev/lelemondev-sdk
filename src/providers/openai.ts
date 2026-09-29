@@ -6,7 +6,7 @@
  * Server smart: extracts tokens, output, tools, etc.
  */
 
-import type { ProviderName } from '../core/types';
+import type { ProviderName, ObserveOptions } from '../core/types';
 import { captureTrace, captureError } from '../core/capture';
 import { registerToolCalls } from '../core/context';
 
@@ -102,22 +102,22 @@ export function canHandle(client: unknown): boolean {
   return !!(c.chat && c.completions) || !!c.responses;
 }
 
-export function wrap(client: unknown): unknown {
+export function wrap(client: unknown, context?: ObserveOptions): unknown {
   const openaiClient = client as OpenAIClient;
   return new Proxy(openaiClient, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'chat' && value && typeof value === 'object') {
-        return wrapChatNamespace(value as OpenAIClient['chat']);
+        return wrapChatNamespace(value as OpenAIClient['chat'], context);
       }
       if (prop === 'responses' && value && typeof value === 'object') {
-        return wrapResponsesNamespace(value as OpenAIClient['responses']);
+        return wrapResponsesNamespace(value as OpenAIClient['responses'], context);
       }
       if (prop === 'completions' && value && typeof value === 'object') {
-        return wrapCompletionsNamespace(value as OpenAIClient['completions']);
+        return wrapCompletionsNamespace(value as OpenAIClient['completions'], context);
       }
       if (prop === 'embeddings' && value && typeof value === 'object') {
-        return wrapEmbeddingsNamespace(value as OpenAIClient['embeddings']);
+        return wrapEmbeddingsNamespace(value as OpenAIClient['embeddings'], context);
       }
       return value;
     },
@@ -128,64 +128,64 @@ export function wrap(client: unknown): unknown {
 // Namespace Wrappers
 // ─────────────────────────────────────────────────────────────
 
-function wrapChatNamespace(chat: OpenAIClient['chat']) {
+function wrapChatNamespace(chat: OpenAIClient['chat'], context?: ObserveOptions) {
   if (!chat) return chat;
   return new Proxy(chat, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'completions' && value && typeof value === 'object') {
-        return wrapChatCompletions(value as { create: (...args: unknown[]) => Promise<unknown> });
+        return wrapChatCompletions(value as { create: (...args: unknown[]) => Promise<unknown> }, context);
       }
       return value;
     },
   });
 }
 
-function wrapChatCompletions(completions: { create: (...args: unknown[]) => Promise<unknown> }) {
+function wrapChatCompletions(completions: { create: (...args: unknown[]) => Promise<unknown> }, context?: ObserveOptions) {
   return new Proxy(completions, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return wrapChatCreate(value.bind(target));
+        return wrapChatCreate(value.bind(target), context);
       }
       return value;
     },
   });
 }
 
-function wrapResponsesNamespace(responses: OpenAIClient['responses']) {
+function wrapResponsesNamespace(responses: OpenAIClient['responses'], context?: ObserveOptions) {
   if (!responses) return responses;
   return new Proxy(responses, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return wrapResponsesCreate(value.bind(target));
+        return wrapResponsesCreate(value.bind(target), context);
       }
       return value;
     },
   });
 }
 
-function wrapCompletionsNamespace(completions: OpenAIClient['completions']) {
+function wrapCompletionsNamespace(completions: OpenAIClient['completions'], context?: ObserveOptions) {
   if (!completions) return completions;
   return new Proxy(completions, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return wrapCompletionCreate(value.bind(target));
+        return wrapCompletionCreate(value.bind(target), context);
       }
       return value;
     },
   });
 }
 
-function wrapEmbeddingsNamespace(embeddings: OpenAIClient['embeddings']) {
+function wrapEmbeddingsNamespace(embeddings: OpenAIClient['embeddings'], context?: ObserveOptions) {
   if (!embeddings) return embeddings;
   return new Proxy(embeddings, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (prop === 'create' && typeof value === 'function') {
-        return wrapEmbeddingsCreate(value.bind(target));
+        return wrapEmbeddingsCreate(value.bind(target), context);
       }
       return value;
     },
@@ -196,7 +196,7 @@ function wrapEmbeddingsNamespace(embeddings: OpenAIClient['embeddings']) {
 // Chat Completions
 // ─────────────────────────────────────────────────────────────
 
-export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
+export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unknown>, context?: ObserveOptions) {
   return async function wrappedChatCreate(...args: unknown[]): Promise<unknown> {
     const startTime = Date.now();
     const request = (args[0] || {}) as ChatCompletionRequest;
@@ -206,7 +206,7 @@ export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unkno
       const response = await originalFn(...args);
 
       if (isStreaming && isAsyncIterable(response)) {
-        return wrapStream(response, request, startTime);
+        return wrapStream(response, request, startTime, context);
       }
 
       // Non-streaming: send raw response
@@ -221,6 +221,7 @@ export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unkno
         durationMs,
         status: 'success',
         streaming: false,
+        context,
       });
 
       // Register tool calls for hierarchy
@@ -241,6 +242,7 @@ export function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unkno
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs,
         streaming: isStreaming,
+        context,
       });
       throw error;
     }
@@ -258,7 +260,8 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
 async function* wrapStream(
   stream: AsyncIterable<unknown>,
   request: ChatCompletionRequest,
-  startTime: number
+  startTime: number,
+  context?: ObserveOptions
 ): AsyncIterable<unknown> {
   // Reconstruct response object from stream
   const finalResponse: ChatCompletionResponse = {
@@ -334,6 +337,7 @@ async function* wrapStream(
         error,
         durationMs,
         streaming: true,
+        context,
       });
     } else {
       const spanId = captureTrace({
@@ -345,6 +349,7 @@ async function* wrapStream(
         status: 'success',
         streaming: true,
         firstTokenMs,
+        context,
       });
 
       if (spanId) {
@@ -361,7 +366,7 @@ async function* wrapStream(
 // Responses API
 // ─────────────────────────────────────────────────────────────
 
-export function wrapResponsesCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
+export function wrapResponsesCreate(originalFn: (...args: unknown[]) => Promise<unknown>, context?: ObserveOptions) {
   return async function wrappedResponsesCreate(...args: unknown[]): Promise<unknown> {
     const startTime = Date.now();
     const request = (args[0] || {}) as ResponsesRequest;
@@ -371,7 +376,7 @@ export function wrapResponsesCreate(originalFn: (...args: unknown[]) => Promise<
       const response = await originalFn(...args);
 
       if (isStreaming && isAsyncIterable(response)) {
-        return wrapResponsesStream(response, request, startTime);
+        return wrapResponsesStream(response, request, startTime, context);
       }
 
       const durationMs = Date.now() - startTime;
@@ -383,6 +388,7 @@ export function wrapResponsesCreate(originalFn: (...args: unknown[]) => Promise<
         durationMs,
         status: 'success',
         streaming: false,
+        context,
       });
 
       return response;
@@ -395,6 +401,7 @@ export function wrapResponsesCreate(originalFn: (...args: unknown[]) => Promise<
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs,
         streaming: isStreaming,
+        context,
       });
       throw error;
     }
@@ -404,7 +411,8 @@ export function wrapResponsesCreate(originalFn: (...args: unknown[]) => Promise<
 async function* wrapResponsesStream(
   stream: AsyncIterable<unknown>,
   request: ResponsesRequest,
-  startTime: number
+  startTime: number,
+  context?: ObserveOptions
 ): AsyncIterable<unknown> {
   const allEvents: unknown[] = [];
   let finalResponse: unknown = null;
@@ -433,6 +441,7 @@ async function* wrapResponsesStream(
         error,
         durationMs,
         streaming: true,
+        context,
       });
     } else {
       captureTrace({
@@ -443,6 +452,7 @@ async function* wrapResponsesStream(
         durationMs,
         status: 'success',
         streaming: true,
+        context,
       });
     }
   }
@@ -452,7 +462,7 @@ async function* wrapResponsesStream(
 // Legacy Completions
 // ─────────────────────────────────────────────────────────────
 
-export function wrapCompletionCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
+export function wrapCompletionCreate(originalFn: (...args: unknown[]) => Promise<unknown>, context?: ObserveOptions) {
   return async function wrappedCompletionCreate(...args: unknown[]): Promise<unknown> {
     const startTime = Date.now();
     const request = (args[0] || {}) as Record<string, unknown>;
@@ -469,6 +479,7 @@ export function wrapCompletionCreate(originalFn: (...args: unknown[]) => Promise
         durationMs,
         status: 'success',
         streaming: false,
+        context,
       });
 
       return response;
@@ -481,6 +492,7 @@ export function wrapCompletionCreate(originalFn: (...args: unknown[]) => Promise
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs,
         streaming: false,
+        context,
       });
       throw error;
     }
@@ -491,7 +503,7 @@ export function wrapCompletionCreate(originalFn: (...args: unknown[]) => Promise
 // Embeddings
 // ─────────────────────────────────────────────────────────────
 
-export function wrapEmbeddingsCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
+export function wrapEmbeddingsCreate(originalFn: (...args: unknown[]) => Promise<unknown>, context?: ObserveOptions) {
   return async function wrappedEmbeddingsCreate(...args: unknown[]): Promise<unknown> {
     const startTime = Date.now();
     const request = (args[0] || {}) as Record<string, unknown>;
@@ -509,6 +521,7 @@ export function wrapEmbeddingsCreate(originalFn: (...args: unknown[]) => Promise
         status: 'success',
         streaming: false,
         spanType: 'embedding',
+        context,
       });
 
       return response;
@@ -521,6 +534,7 @@ export function wrapEmbeddingsCreate(originalFn: (...args: unknown[]) => Promise
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs,
         streaming: false,
+        context,
       });
       throw error;
     }

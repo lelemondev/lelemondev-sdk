@@ -11,32 +11,6 @@ import { traceCapture, traceCaptureError, debug } from './logger';
 import { getTraceContext, generateId } from './context';
 
 // ─────────────────────────────────────────────────────────────
-// Global context (set via observe options)
-// ─────────────────────────────────────────────────────────────
-
-// Use a global symbol to ensure single instance across all entry points
-// This fixes the issue where @lelemondev/sdk and @lelemondev/sdk/bedrock
-// would create separate globalContext due to bundler splitting
-const GLOBAL_CONTEXT_KEY = Symbol.for('@lelemondev/sdk:globalContext');
-
-function getGlobalContextStore(): { context: ObserveOptions } {
-  const globalObj = globalThis as Record<symbol, { context: ObserveOptions } | undefined>;
-  if (!globalObj[GLOBAL_CONTEXT_KEY]) {
-    globalObj[GLOBAL_CONTEXT_KEY] = { context: {} };
-  }
-  return globalObj[GLOBAL_CONTEXT_KEY];
-}
-
-export function setGlobalContext(options: ObserveOptions): void {
-  getGlobalContextStore().context = options;
-  debug('Global context updated', options);
-}
-
-export function getGlobalContext(): ObserveOptions {
-  return getGlobalContextStore().context;
-}
-
-// ─────────────────────────────────────────────────────────────
 // Capture Functions
 // ─────────────────────────────────────────────────────────────
 
@@ -58,6 +32,9 @@ export interface CaptureTraceParams {
   // Manual span type
   spanType?: SpanType;
   name?: string;
+
+  // Context bound to the observed client
+  context?: ObserveOptions;
 }
 
 export interface CaptureErrorParams {
@@ -68,6 +45,7 @@ export interface CaptureErrorParams {
   durationMs: number;
   streaming: boolean;
   metadata?: Record<string, unknown>;
+  context?: ObserveOptions;
 }
 
 /**
@@ -83,7 +61,7 @@ export function captureTrace(params: CaptureTraceParams): string | undefined {
       return undefined;
     }
 
-    const globalContext = getGlobalContext();
+    const clientContext = params.context ?? {};
     const traceContext = getTraceContext();
     const spanId = generateId();
 
@@ -99,19 +77,19 @@ export function captureTrace(params: CaptureTraceParams): string | undefined {
       status: params.status,
       streaming: params.streaming,
       firstTokenMs: params.firstTokenMs,
-      sessionId: traceContext?.sessionId ?? globalContext.sessionId,
-      userId: traceContext?.userId ?? globalContext.userId,
+      sessionId: traceContext?.sessionId ?? clientContext.sessionId,
+      userId: traceContext?.userId ?? clientContext.userId,
       // Hierarchy fields
       traceId: traceContext?.traceId,
       spanId,
       parentSpanId: traceContext?.currentSpanId,
       metadata: {
-        ...globalContext.metadata,
+        ...clientContext.metadata,
         ...params.metadata,
         ...(traceContext ? { _traceName: traceContext.name } : {}),
         ...(telemetry ? { _telemetry: telemetry } : {}),
       },
-      tags: globalContext.tags,
+      tags: clientContext.tags ?? traceContext?.tags,
       // Manual span fields
       spanType: params.spanType,
       name: params.name,
@@ -139,7 +117,7 @@ export function captureError(params: CaptureErrorParams): void {
       return;
     }
 
-    const globalContext = getGlobalContext();
+    const clientContext = params.context ?? {};
     const traceContext = getTraceContext();
 
     // Include SDK telemetry in metadata
@@ -153,18 +131,18 @@ export function captureError(params: CaptureErrorParams): void {
       status: 'error',
       errorMessage: params.error.message,
       streaming: params.streaming,
-      sessionId: traceContext?.sessionId ?? globalContext.sessionId,
-      userId: traceContext?.userId ?? globalContext.userId,
+      sessionId: traceContext?.sessionId ?? clientContext.sessionId,
+      userId: traceContext?.userId ?? clientContext.userId,
       traceId: traceContext?.traceId,
       spanId: generateId(),
       parentSpanId: traceContext?.currentSpanId,
       metadata: {
-        ...globalContext.metadata,
+        ...clientContext.metadata,
         ...params.metadata,
         ...(traceContext ? { _traceName: traceContext.name } : {}),
         ...(telemetry ? { _telemetry: telemetry } : {}),
       },
-      tags: globalContext.tags,
+      tags: clientContext.tags ?? traceContext?.tags,
     };
 
     traceCapture(params.provider, params.model, params.durationMs, 'error');
@@ -211,7 +189,7 @@ export function captureSpan(options: CaptureSpanOptions): void {
       return;
     }
 
-    const globalContext = getGlobalContext();
+    const spanContext = options.context ?? {};
     const traceContext = getTraceContext();
 
     // Extract trace context from metadata if passed from span() in context.ts
@@ -223,7 +201,7 @@ export function captureSpan(options: CaptureSpanOptions): void {
 
     // Clean up internal metadata keys and add telemetry
     const cleanMetadata: Record<string, unknown> = {
-      ...globalContext.metadata,
+      ...spanContext.metadata,
       ...options.metadata,
       ...(telemetry ? { _telemetry: telemetry } : {}),
     };
@@ -242,14 +220,14 @@ export function captureSpan(options: CaptureSpanOptions): void {
       status: options.status || 'success',
       errorMessage: options.errorMessage,
       streaming: false,
-      sessionId: traceContext?.sessionId ?? globalContext.sessionId,
-      userId: traceContext?.userId ?? globalContext.userId,
+      sessionId: traceContext?.sessionId ?? spanContext.sessionId,
+      userId: traceContext?.userId ?? spanContext.userId,
       traceId: metadataTraceId ?? traceContext?.traceId,
       spanId: generateId(),
       parentSpanId: metadataParentSpanId ?? traceContext?.currentSpanId,
       toolCallId: options.toolCallId,
       metadata: cleanMetadata,
-      tags: globalContext.tags,
+      tags: spanContext.tags ?? traceContext?.tags,
     };
 
     debug(`Span captured: ${options.type}/${options.name}`, { durationMs: options.durationMs });

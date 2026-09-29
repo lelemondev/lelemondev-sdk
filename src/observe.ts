@@ -10,7 +10,6 @@ import * as bedrock from './providers/bedrock';
 import * as googleGenai from './providers/google-genai';
 import * as gemini from './providers/gemini';
 import * as openrouter from './providers/openrouter';
-import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
 import { clientWrapped, warn, debug } from './core/logger';
@@ -36,11 +35,6 @@ import { clientWrapped, warn, debug } from './core/logger';
  * const response = await openai.chat.completions.create({...});
  */
 export function observe<T>(client: T, options?: ObserveOptions): T {
-  // Set global context if provided
-  if (options) {
-    setGlobalContext(options);
-  }
-
   // Check if disabled
   const config = getConfig();
   if (config.disabled) {
@@ -52,32 +46,32 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   // Note: OpenRouter must be checked BEFORE OpenAI because it uses the OpenAI SDK
   if (openrouter.canHandle(client)) {
     clientWrapped('openrouter');
-    return openrouter.wrap(client) as T;
+    return openrouter.wrap(client, options) as T;
   }
 
   if (openai.canHandle(client)) {
     clientWrapped('openai');
-    return wrapOpenAI(client) as T;
+    return wrapOpenAI(client, options) as T;
   }
 
   if (anthropic.canHandle(client)) {
     clientWrapped('anthropic');
-    return wrapAnthropic(client) as T;
+    return wrapAnthropic(client, options) as T;
   }
 
   if (bedrock.canHandle(client)) {
     clientWrapped('bedrock');
-    return bedrock.wrap(client) as T;
+    return bedrock.wrap(client, options) as T;
   }
 
   if (googleGenai.canHandle(client)) {
     clientWrapped('gemini');
-    return googleGenai.wrap(client) as T;
+    return googleGenai.wrap(client, options) as T;
   }
 
   if (gemini.canHandle(client)) {
     clientWrapped('gemini');
-    return gemini.wrap(client) as T;
+    return gemini.wrap(client, options) as T;
   }
 
   // Unknown client type
@@ -97,7 +91,7 @@ interface OpenAIShape {
   embeddings?: { create: CallableFunction };
 }
 
-function wrapOpenAI(client: unknown): unknown {
+function wrapOpenAI(client: unknown, context?: ObserveOptions): unknown {
   const typed = client as OpenAIShape;
 
   return new Proxy(typed, {
@@ -105,19 +99,19 @@ function wrapOpenAI(client: unknown): unknown {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'chat' && value && typeof value === 'object') {
-        return wrapOpenAIChat(value as OpenAIShape['chat']);
+        return wrapOpenAIChat(value as OpenAIShape['chat'], context);
       }
 
       if (prop === 'responses' && value && typeof value === 'object') {
-        return wrapOpenAIResponses(value as OpenAIShape['responses']);
+        return wrapOpenAIResponses(value as OpenAIShape['responses'], context);
       }
 
       if (prop === 'completions' && value && typeof value === 'object') {
-        return wrapOpenAICompletions(value as OpenAIShape['completions']);
+        return wrapOpenAICompletions(value as OpenAIShape['completions'], context);
       }
 
       if (prop === 'embeddings' && value && typeof value === 'object') {
-        return wrapOpenAIEmbeddings(value as OpenAIShape['embeddings']);
+        return wrapOpenAIEmbeddings(value as OpenAIShape['embeddings'], context);
       }
 
       return value;
@@ -125,13 +119,13 @@ function wrapOpenAI(client: unknown): unknown {
   });
 }
 
-function wrapOpenAIChat(chat: OpenAIShape['chat']) {
+function wrapOpenAIChat(chat: OpenAIShape['chat'], context?: ObserveOptions) {
   return new Proxy(chat!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'completions' && value && typeof value === 'object') {
-        return wrapOpenAIChatCompletions(value as { create: CallableFunction });
+        return wrapOpenAIChatCompletions(value as { create: CallableFunction }, context);
       }
 
       return value;
@@ -139,13 +133,13 @@ function wrapOpenAIChat(chat: OpenAIShape['chat']) {
   });
 }
 
-function wrapOpenAIChatCompletions(completions: { create: CallableFunction }) {
+function wrapOpenAIChatCompletions(completions: { create: CallableFunction }, context?: ObserveOptions) {
   return new Proxy(completions, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return openai.wrapChatCreate(value.bind(target));
+        return openai.wrapChatCreate(value.bind(target), context);
       }
 
       return value;
@@ -153,13 +147,13 @@ function wrapOpenAIChatCompletions(completions: { create: CallableFunction }) {
   });
 }
 
-function wrapOpenAIResponses(responses: OpenAIShape['responses']) {
+function wrapOpenAIResponses(responses: OpenAIShape['responses'], context?: ObserveOptions) {
   return new Proxy(responses!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return openai.wrapResponsesCreate(value.bind(target));
+        return openai.wrapResponsesCreate(value.bind(target), context);
       }
 
       return value;
@@ -167,13 +161,13 @@ function wrapOpenAIResponses(responses: OpenAIShape['responses']) {
   });
 }
 
-function wrapOpenAICompletions(completions: OpenAIShape['completions']) {
+function wrapOpenAICompletions(completions: OpenAIShape['completions'], context?: ObserveOptions) {
   return new Proxy(completions!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return openai.wrapCompletionCreate(value.bind(target));
+        return openai.wrapCompletionCreate(value.bind(target), context);
       }
 
       return value;
@@ -181,13 +175,13 @@ function wrapOpenAICompletions(completions: OpenAIShape['completions']) {
   });
 }
 
-function wrapOpenAIEmbeddings(embeddings: OpenAIShape['embeddings']) {
+function wrapOpenAIEmbeddings(embeddings: OpenAIShape['embeddings'], context?: ObserveOptions) {
   return new Proxy(embeddings!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return openai.wrapEmbeddingsCreate(value.bind(target));
+        return openai.wrapEmbeddingsCreate(value.bind(target), context);
       }
 
       return value;
@@ -206,7 +200,7 @@ interface AnthropicShape {
   };
 }
 
-function wrapAnthropic(client: unknown): unknown {
+function wrapAnthropic(client: unknown, context?: ObserveOptions): unknown {
   const typed = client as AnthropicShape;
 
   return new Proxy(typed, {
@@ -214,7 +208,7 @@ function wrapAnthropic(client: unknown): unknown {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'messages' && value && typeof value === 'object') {
-        return wrapAnthropicMessages(value as AnthropicShape['messages']);
+        return wrapAnthropicMessages(value as AnthropicShape['messages'], context);
       }
 
       return value;
@@ -222,17 +216,17 @@ function wrapAnthropic(client: unknown): unknown {
   });
 }
 
-function wrapAnthropicMessages(messages: AnthropicShape['messages']) {
+function wrapAnthropicMessages(messages: AnthropicShape['messages'], context?: ObserveOptions) {
   return new Proxy(messages!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return anthropic.wrapMessagesCreate(value.bind(target));
+        return anthropic.wrapMessagesCreate(value.bind(target), context);
       }
 
       if (prop === 'stream' && typeof value === 'function') {
-        return anthropic.wrapMessagesStream(value.bind(target));
+        return anthropic.wrapMessagesStream(value.bind(target), context);
       }
 
       return value;

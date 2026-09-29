@@ -30,7 +30,6 @@ export type { TraceContext, TraceOptions, SpanOptions } from './core/context';
 
 // Provider-specific observe
 import * as bedrock from './providers/bedrock';
-import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
 import { clientWrapped, warn, debug } from './core/logger';
@@ -39,10 +38,6 @@ import { clientWrapped, warn, debug } from './core/logger';
  * Wrap a Bedrock client with automatic tracing
  */
 export function observe<T>(client: T, options?: ObserveOptions): T {
-  if (options) {
-    setGlobalContext(options);
-  }
-
   const config = getConfig();
   if (config.disabled) {
     debug('Tracing disabled, returning unwrapped client');
@@ -55,5 +50,5 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   }
 
   clientWrapped('bedrock');
-  return bedrock.wrap(client) as T;
+  return bedrock.wrap(client, options) as T;
 }

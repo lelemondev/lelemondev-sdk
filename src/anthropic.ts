@@ -30,7 +30,6 @@ export type { TraceContext, TraceOptions, SpanOptions } from './core/context';
 
 // Provider-specific observe
 import * as anthropic from './providers/anthropic';
-import { setGlobalContext } from './core/capture';
 import { getConfig } from './core/config';
 import type { ObserveOptions } from './core/types';
 import { clientWrapped, warn, debug } from './core/logger';
@@ -39,10 +38,6 @@ import { clientWrapped, warn, debug } from './core/logger';
  * Wrap an Anthropic client with automatic tracing
  */
 export function observe<T>(client: T, options?: ObserveOptions): T {
-  if (options) {
-    setGlobalContext(options);
-  }
-
   const config = getConfig();
   if (config.disabled) {
     debug('Tracing disabled, returning unwrapped client');
@@ -55,7 +50,7 @@ export function observe<T>(client: T, options?: ObserveOptions): T {
   }
 
   clientWrapped('anthropic');
-  return wrapAnthropic(client) as T;
+  return wrapAnthropic(client, options) as T;
 }
 
 // Anthropic wrapper implementation
@@ -66,7 +61,7 @@ interface AnthropicShape {
   };
 }
 
-function wrapAnthropic(client: unknown): unknown {
+function wrapAnthropic(client: unknown, context?: ObserveOptions): unknown {
   const typed = client as AnthropicShape;
 
   return new Proxy(typed, {
@@ -74,7 +69,7 @@ function wrapAnthropic(client: unknown): unknown {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'messages' && value && typeof value === 'object') {
-        return wrapAnthropicMessages(value as AnthropicShape['messages']);
+        return wrapAnthropicMessages(value as AnthropicShape['messages'], context);
       }
 
       return value;
@@ -82,17 +77,17 @@ function wrapAnthropic(client: unknown): unknown {
   });
 }
 
-function wrapAnthropicMessages(messages: AnthropicShape['messages']) {
+function wrapAnthropicMessages(messages: AnthropicShape['messages'], context?: ObserveOptions) {
   return new Proxy(messages!, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return anthropic.wrapMessagesCreate(value.bind(target));
+        return anthropic.wrapMessagesCreate(value.bind(target), context);
       }
 
       if (prop === 'stream' && typeof value === 'function') {
-        return anthropic.wrapMessagesStream(value.bind(target));
+        return anthropic.wrapMessagesStream(value.bind(target), context);
       }
 
       return value;

@@ -12,7 +12,7 @@
  * @see https://openrouter.ai/docs
  */
 
-import type { ProviderName } from '../core/types';
+import type { ProviderName, ObserveOptions } from '../core/types';
 import { captureTrace, captureError } from '../core/capture';
 
 // ─────────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ export function canHandle(client: unknown): boolean {
 /**
  * Wrap OpenRouter client with tracing
  */
-export function wrap(client: unknown): unknown {
+export function wrap(client: unknown, context?: ObserveOptions): unknown {
   const openrouterClient = client as OpenRouterClient;
 
   return new Proxy(openrouterClient, {
@@ -115,7 +115,7 @@ export function wrap(client: unknown): unknown {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'chat' && value && typeof value === 'object') {
-        return wrapChatNamespace(value as OpenRouterClient['chat']);
+        return wrapChatNamespace(value as OpenRouterClient['chat'], context);
       }
 
       return value;
@@ -127,7 +127,7 @@ export function wrap(client: unknown): unknown {
 // Namespace Wrappers
 // ─────────────────────────────────────────────────────────────
 
-function wrapChatNamespace(chat: OpenRouterClient['chat']) {
+function wrapChatNamespace(chat: OpenRouterClient['chat'], context?: ObserveOptions) {
   if (!chat) return chat;
 
   return new Proxy(chat, {
@@ -135,7 +135,7 @@ function wrapChatNamespace(chat: OpenRouterClient['chat']) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'completions' && value && typeof value === 'object') {
-        return wrapChatCompletions(value as { create: (...args: unknown[]) => Promise<unknown> });
+        return wrapChatCompletions(value as { create: (...args: unknown[]) => Promise<unknown> }, context);
       }
 
       return value;
@@ -143,13 +143,13 @@ function wrapChatNamespace(chat: OpenRouterClient['chat']) {
   });
 }
 
-function wrapChatCompletions(completions: { create: (...args: unknown[]) => Promise<unknown> }) {
+function wrapChatCompletions(completions: { create: (...args: unknown[]) => Promise<unknown> }, context?: ObserveOptions) {
   return new Proxy(completions, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
 
       if (prop === 'create' && typeof value === 'function') {
-        return wrapChatCreate(value.bind(target));
+        return wrapChatCreate(value.bind(target), context);
       }
 
       return value;
@@ -161,7 +161,7 @@ function wrapChatCompletions(completions: { create: (...args: unknown[]) => Prom
 // Method Wrapper
 // ─────────────────────────────────────────────────────────────
 
-function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
+function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unknown>, context?: ObserveOptions) {
   return async function wrappedChatCreate(...args: unknown[]): Promise<unknown> {
     const startTime = Date.now();
     const request = (args[0] || {}) as ChatCompletionRequest;
@@ -171,7 +171,7 @@ function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
       const response = await originalFn(...args);
 
       if (isStreaming && isAsyncIterable(response)) {
-        return wrapStream(response, request, startTime);
+        return wrapStream(response, request, startTime, context);
       }
 
       // Non-streaming response
@@ -186,6 +186,7 @@ function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
         durationMs,
         status: 'success',
         streaming: false,
+        context,
       });
 
       return response;
@@ -199,6 +200,7 @@ function wrapChatCreate(originalFn: (...args: unknown[]) => Promise<unknown>) {
         error: error instanceof Error ? error : new Error(String(error)),
         durationMs,
         streaming: isStreaming,
+        context,
       });
 
       throw error;
@@ -217,7 +219,8 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
 async function* wrapStream(
   stream: AsyncIterable<unknown>,
   request: ChatCompletionRequest,
-  startTime: number
+  startTime: number,
+  context?: ObserveOptions
 ): AsyncIterable<unknown> {
   // Reconstruct response object from stream
   const finalResponse: ChatCompletionResponse = {
@@ -274,6 +277,7 @@ async function* wrapStream(
         error,
         durationMs,
         streaming: true,
+        context,
       });
     } else {
       captureTrace({
@@ -285,6 +289,7 @@ async function* wrapStream(
         status: 'success',
         streaming: true,
         firstTokenMs,
+        context,
       });
     }
   }
